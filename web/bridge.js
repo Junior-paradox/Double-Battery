@@ -493,7 +493,10 @@ async function onCommand(msg) {
 }
 
 /* ---------------- http + upgrade ---------------- */
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
+  /* Served as application/octet-stream a favicon is simply ignored. */
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
 const server = http.createServer((req, res) => {
   const file = req.url === '/' ? 'index.html' : path.basename(req.url.split('?')[0]);
   const full = path.join(__dirname, file);
