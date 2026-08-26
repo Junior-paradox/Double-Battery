@@ -10,9 +10,12 @@
  * out. Text in because it parses with strtoul and no library; JSON out
  * because the browser consumes it directly.
  *
- *   DISPATCH <node> <need_hosp> <need_amb> <urgency> <sla_ms> <horizon> <geom>
- *   COMMIT <amb> <hosp>          reserve the vehicle and the bed
- *   RELEASE <amb>                vehicle back in service
+ *   DISPATCH <node> <need_hosp> <need_amb> <need_med> <med_qty>
+ *            <urgency> <sla_ms> <horizon> <geom>
+ *   COMMIT <amb> <hosp> <med> <qty>   reserve vehicle, bed, medicine
+ *   RELEASE <amb> <hosp>              vehicle back in service, queue drains
+ *   CLOCK <ms>                        set time of day; redrives doctor shifts
+ *   RESTOCK <hosp> <med> <qty>        replenish a medicine batch
  *   CLOSE <edge> | OPEN <edge>   road closure, O(1)
  *   REBUILD                      refresh the hospital index after closures
  *   NODE <index>                 resolve a village index to a node id
@@ -21,7 +24,7 @@
  *   STATS | QUIT
  */
 #define _GNU_SOURCE
-#include "hindex.h"
+#include "htable.h"
 #include <pthread.h>
 #include <unistd.h>
 #include <netinet/in.h>
@@ -34,13 +37,14 @@
 #define N_HOSP 60
 #define N_AMB  200
 #define N_VILLAGE 5000
+#define DOCS_PER_HOSP 6
 #define PATH_CAP 16384
 #define LINE_CAP 512
 #define OUT_CAP  (1 << 20)
 
 static Graph     G;
 static World     W;
-static HospIndex HI;
+static HospTable HT;
 /* Readers (dispatch) run concurrently; writers (closures, state commits,
  * index rebuild) are exclusive. Queries are short enough that writer
  * starvation is not a concern at demo scale. */
@@ -72,6 +76,8 @@ static int cmd_dispatch(Ctx *c, char *arg) {
     r.node         = tok(&arg);
     r.need_hosp    = tok(&arg);
     r.need_amb     = tok(&arg);
+    r.need_med     = (uint8_t)(tok(&arg) % N_MED);
+    r.med_qty      = tok(&arg);
     r.urgency      = (uint8_t)tok(&arg);
     r.sla_ms       = tok(&arg);
     r.max_reach_ms = tok(&arg);
@@ -80,10 +86,10 @@ static int cmd_dispatch(Ctx *c, char *arg) {
     if (r.node >= G.n_nodes)
         return snprintf(c->out, OUT_CAP, "{\"ok\":false,\"error\":\"bad node\"}\n");
 
-    Decision d; uint32_t fb = 0;
+    Decision d;
     uint64_t t0 = now_ns();
     pthread_rwlock_rdlock(&LOCK);
-    dispatch_indexed(&G, &c->back, &c->fwd, &W, &HI, &r, &d, &fb);
+    dispatch_table(&G, &c->back, &W, &HT, &r, &d);
 
     uint32_t n_a = 0, n_h = 0;
     static _Thread_local uint32_t hpath[PATH_CAP];
@@ -102,19 +108,37 @@ static int cmd_dispatch(Ctx *c, char *arg) {
     N_SERVED++; NS_TOTAL += (uint64_t)(us * 1000.0);
     pthread_mutex_unlock(&STAT_LOCK);
 
-    if (!d.ok)
+    if (!d.ok) {
+        /* Say WHICH half failed -- "no ambulance" and "no qualifying
+           hospital" are completely different operational problems. */
+        const char *why = d.amb == INF32
+            ? (d.horizon_hit ? "no ambulance within horizon" : "no ambulance available")
+            : "no hospital with specialist, bed and medicine";
         return snprintf(c->out, OUT_CAP,
-            "{\"ok\":false,\"reason\":\"%s\",\"latency_us\":%.1f}\n",
-            d.horizon_hit ? "no unit within horizon" : "no route", us);
+            "{\"ok\":false,\"reason\":\"%s\",\"considered\":%u,\"latency_us\":%.1f}\n",
+            why, d.considered, us);
+    }
 
     int n = snprintf(c->out, OUT_CAP,
         "{\"ok\":true,\"amb\":%u,\"amb_node\":%u,\"hosp\":%u,\"hosp_node\":%u,"
-        "\"beds_free\":%d,\"t_scene_ms\":%u,\"t_hosp_ms\":%u,\"t_total_ms\":%u,"
-        "\"sla_met\":%s,\"settled\":%llu,\"indexed\":%s,\"latency_us\":%.1f",
+        "\"beds_free\":%d,\"med_left\":%d,\"t_scene_ms\":%u,\"t_hosp_ms\":%u,"
+        "\"wait_ms\":%u,\"t_total_ms\":%u,\"sla_met\":%s,\"settled\":%llu,"
+        "\"considered\":%u,\"latency_us\":%.1f",
         d.amb, W.amb[d.amb].node, d.hosp, W.hosp[d.hosp].node,
-        W.hosp[d.hosp].beds_free, d.t_to_scene, d.t_to_hosp, d.t_total,
+        W.hosp[d.hosp].beds_free, W.hosp[d.hosp].med[r.need_med],
+        d.t_to_scene, d.t_to_hosp, d.wait_ms, d.t_total,
         d.sla_met ? "true" : "false", (unsigned long long)d.settled,
-        fb ? "false" : "true", us);
+        d.considered, us);
+
+    /* Breadcrumbs: the closer hospitals that were passed over, and why. */
+    n += snprintf(c->out + n, (size_t)(OUT_CAP - n), ",\"rejected\":[");
+    for (uint32_t k = 0; k < d.n_rejected; k++)
+        n += snprintf(c->out + n, (size_t)(OUT_CAP - n),
+            "%s{\"hosp\":%u,\"node\":%u,\"travel_ms\":%u,\"wait_ms\":%u,\"why\":\"%s\"}",
+            k ? "," : "", d.rejected[k].hosp, W.hosp[d.rejected[k].hosp].node,
+            d.rejected[k].travel_ms, d.rejected[k].wait_ms,
+            reject_name(d.rejected[k].reason));
+    n += snprintf(c->out + n, (size_t)(OUT_CAP - n), "]");
 
     if (n_a) { n += snprintf(c->out + n, OUT_CAP - n, ",\"leg1\":[");
                n = emit_coords(c->out, n, c->path, n_a, 1);
@@ -135,22 +159,56 @@ static int handle(Ctx *c, char *line) {
 
     if (!strncmp(line, "COMMIT", 6)) {
         uint32_t a = tok(&arg), h = tok(&arg);
+        uint32_t med = tok(&arg) % N_MED, qty = tok(&arg);
         if (a >= W.n_amb || h >= W.n_hosp)
             return snprintf(c->out, OUT_CAP, "{\"ok\":false,\"error\":\"bad id\"}\n");
+        Decision d = { .ok = 1, .amb = a, .hosp = h };
+        Request  r = { .need_med = (uint8_t)med, .med_qty = qty };
         pthread_rwlock_wrlock(&LOCK);
-        W.amb[a].busy = 1; W.hosp[h].beds_free--;
-        int bf = W.hosp[h].beds_free;
+        decision_commit(&W, &d, &r);
+        int bf = W.hosp[h].beds_free, ml = W.hosp[h].med[med];
+        uint32_t ql = W.hosp[h].queue_len, wt = hosp_wait_ms(&W.hosp[h]);
         pthread_rwlock_unlock(&LOCK);
-        return snprintf(c->out, OUT_CAP, "{\"ok\":true,\"beds_free\":%d}\n", bf);
+        return snprintf(c->out, OUT_CAP,
+            "{\"ok\":true,\"beds_free\":%d,\"med_left\":%d,\"queue\":%u,\"wait_ms\":%u}\n",
+            bf, ml, ql, wt);
     }
     if (!strncmp(line, "RELEASE", 7)) {
-        uint32_t a = tok(&arg);
+        uint32_t a = tok(&arg), h = tok(&arg);
         if (a >= W.n_amb)
             return snprintf(c->out, OUT_CAP, "{\"ok\":false,\"error\":\"bad id\"}\n");
         pthread_rwlock_wrlock(&LOCK);
-        W.amb[a].busy = 0;
+        decision_release(&W, a, h);
         pthread_rwlock_unlock(&LOCK);
         return snprintf(c->out, OUT_CAP, "{\"ok\":true}\n");
+    }
+    if (!strncmp(line, "CLOCK", 5)) {
+        uint32_t t = tok(&arg);
+        pthread_rwlock_wrlock(&LOCK);
+        world_set_clock(&W, t);
+        uint32_t on = 0, cover = 0;
+        for (uint32_t i = 0; i < W.n_hosp; i++) {
+            on += W.hosp[i].docs_on_duty;
+            cover += (uint32_t)__builtin_popcount(W.hosp[i].on_duty_mask);
+        }
+        pthread_rwlock_unlock(&LOCK);
+        return snprintf(c->out, OUT_CAP,
+            "{\"ok\":true,\"clock_ms\":%u,\"docs_on_duty\":%u,\"staffed_departments\":%u}\n",
+            t % DAY_MS, on, cover);
+    }
+    if (!strncmp(line, "RESTOCK", 7)) {
+        uint32_t h = tok(&arg), m = tok(&arg) % N_MED, q = tok(&arg);
+        pthread_rwlock_wrlock(&LOCK);
+        uint32_t lo = h >= W.n_hosp ? 0 : h, hi = h >= W.n_hosp ? W.n_hosp : h + 1;
+        uint32_t topped = 0;
+        for (uint32_t i = lo; i < hi; i++) {
+            int32_t before = W.hosp[i].med[m];
+            W.hosp[i].med[m] += (int32_t)q;
+            if (W.hosp[i].med[m] > W.hosp[i].med_cap[m]) W.hosp[i].med[m] = W.hosp[i].med_cap[m];
+            topped += (uint32_t)(W.hosp[i].med[m] - before);
+        }
+        pthread_rwlock_unlock(&LOCK);
+        return snprintf(c->out, OUT_CAP, "{\"ok\":true,\"units_added\":%u}\n", topped);
     }
     if (!strncmp(line, "CLOSE", 5) || !strncmp(line, "OPEN", 4)) {
         int close = line[0] == 'C';
@@ -169,11 +227,11 @@ static int handle(Ctx *c, char *line) {
     if (!strncmp(line, "REBUILD", 7)) {
         uint64_t t0 = now_ns();
         pthread_rwlock_wrlock(&LOCK);
-        hindex_build(&HI, &G, &W, &c->geo);
+        htable_build(&HT, &G, &W, &c->geo);
         pthread_rwlock_unlock(&LOCK);
         return snprintf(c->out, OUT_CAP,
             "{\"ok\":true,\"took_ms\":%.2f,\"generation\":%u}\n",
-            (now_ns() - t0) / 1e6, HI.generation);
+            (now_ns() - t0) / 1e6, HT.generation);
     }
     if (!strncmp(line, "NODE", 4)) {
         uint32_t i = tok(&arg) % W.n_village;
@@ -207,11 +265,18 @@ static int handle(Ctx *c, char *line) {
         int n = snprintf(c->out, OUT_CAP, "{\"ok\":true,\"hospitals\":[");
         for (uint32_t i = 0; i < W.n_hosp; i++) {
             uint32_t nd = W.hosp[i].node;
+            int32_t med = 0, medcap = 0;
+            for (uint32_t m = 0; m < N_MED; m++) {
+                med += W.hosp[i].med[m]; medcap += W.hosp[i].med_cap[m];
+            }
             n += snprintf(c->out + n, (size_t)(OUT_CAP - n),
                 "%s{\"id\":%u,\"node\":%u,\"x\":%.1f,\"y\":%.1f,\"spec\":%u,"
-                "\"beds_free\":%d,\"beds_total\":%d}",
+                "\"on_duty\":%u,\"docs\":%u,\"beds_free\":%d,\"beds_total\":%d,"
+                "\"med\":%d,\"med_cap\":%d,\"queue\":%u,\"wait_ms\":%u}",
                 i ? "," : "", i, nd, G.x[nd], G.y[nd], W.hosp[i].spec_mask,
-                W.hosp[i].beds_free, W.hosp[i].beds_total);
+                W.hosp[i].on_duty_mask, W.hosp[i].docs_on_duty,
+                W.hosp[i].beds_free, W.hosp[i].beds_total,
+                med, medcap, W.hosp[i].queue_len, hosp_wait_ms(&W.hosp[i]));
         }
         pthread_rwlock_unlock(&LOCK);
         return n + snprintf(c->out + n, (size_t)(OUT_CAP - n), "]}\n");
@@ -242,17 +307,30 @@ static int handle(Ctx *c, char *line) {
     }
     if (!strncmp(line, "STATS", 5)) {
         pthread_rwlock_rdlock(&LOCK);
-        uint32_t busy = 0, beds = 0;
+        uint32_t busy = 0, beds = 0, beds_tot = 0, docs = 0, qtotal = 0;
+        int64_t med = 0, medcap = 0;
         for (uint32_t i = 0; i < W.n_amb; i++) busy += W.amb[i].busy;
-        for (uint32_t i = 0; i < W.n_hosp; i++) beds += (uint32_t)W.hosp[i].beds_free;
+        for (uint32_t i = 0; i < W.n_hosp; i++) {
+            beds += (uint32_t)W.hosp[i].beds_free;
+            beds_tot += (uint32_t)W.hosp[i].beds_total;
+            docs += W.hosp[i].docs_on_duty;
+            qtotal += W.hosp[i].queue_len;
+            for (uint32_t m = 0; m < N_MED; m++) {
+                med += W.hosp[i].med[m]; medcap += W.hosp[i].med_cap[m];
+            }
+        }
+        uint32_t clock = W.clock_ms;
         pthread_rwlock_unlock(&LOCK);
         pthread_mutex_lock(&STAT_LOCK);
         uint64_t n = N_SERVED, tot = NS_TOTAL;
         pthread_mutex_unlock(&STAT_LOCK);
         return snprintf(c->out, OUT_CAP,
             "{\"ok\":true,\"nodes\":%u,\"edges\":%u,\"ambulances\":%u,\"busy\":%u,"
-            "\"hospitals\":%u,\"beds_free\":%u,\"served\":%llu,\"mean_us\":%.1f}\n",
-            G.n_nodes, G.n_edges, W.n_amb, busy, W.n_hosp, beds,
+            "\"hospitals\":%u,\"beds_free\":%u,\"beds_total\":%u,\"doctors_on_duty\":%u,"
+            "\"med\":%lld,\"med_cap\":%lld,\"queue\":%u,\"clock_ms\":%u,"
+            "\"served\":%llu,\"mean_us\":%.1f}\n",
+            G.n_nodes, G.n_edges, W.n_amb, busy, W.n_hosp, beds, beds_tot, docs,
+            (long long)med, (long long)medcap, qtotal, clock,
             (unsigned long long)n, n ? tot / 1000.0 / n : 0.0);
     }
     return snprintf(c->out, OUT_CAP, "{\"ok\":false,\"error\":\"unknown command\"}\n");
@@ -299,14 +377,14 @@ int main(int argc, char **argv) {
 
     uint64_t t0 = now_ns();
     graph_build_grid(&G, GRID_W, GRID_H, 0xC0FFEEull);
-    world_build(&W, &G, N_HOSP, N_AMB, N_VILLAGE, 0xBEEF01ull);
-    hindex_init(&HI, G.n_nodes);
+    world_build(&W, &G, N_HOSP, N_AMB, N_VILLAGE, DOCS_PER_HOSP, 0xBEEF01ull);
+    htable_init(&HT, G.n_nodes, W.n_hosp);
     Search boot; search_init(&boot, G.n_nodes);
-    hindex_build(&HI, &G, &W, &boot);
+    htable_build(&HT, &G, &W, &boot);
     search_free(&boot);
     fprintf(stderr, "engine ready in %.1f ms | %u nodes %u edges | %.2f MB resident\n",
             (now_ns() - t0) / 1e6, G.n_nodes, G.n_edges,
-            (graph_bytes(&G) + hindex_bytes(&HI) + world_bytes(&W)) / 1048576.0);
+            (graph_bytes(&G) + htable_bytes(&HT) + world_bytes(&W)) / 1048576.0);
 
     int srv = socket(AF_INET, SOCK_STREAM, 0);
     int one = 1;

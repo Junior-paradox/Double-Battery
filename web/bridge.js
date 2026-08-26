@@ -127,19 +127,21 @@ const A = { ALS:256, VENT:512, NEONATAL:1024 };
  * This is what makes the specialty routing mean something: a delivery will
  * not be taken to a hospital without obstetrics, and a neonatal-equipped
  * vehicle is required to carry it, no matter how close a plain van is. */
+const MED = ['analgesic', 'adrenaline', 'anticoagulant', 'burn dressing',
+             'oxytocin', 'paediatric AB', 'antivenom', 'sedative'];
+
 const CASES = [
-  { name: 'road accident',      hosp: H.TRAUMA,             amb: A.ALS | A.VENT, u: 3, w: 18 },
-  { name: 'cardiac arrest',     hosp: H.CARDIAC,            amb: A.ALS | A.VENT, u: 3, w: 14 },
-  { name: 'stroke',             hosp: H.NEURO,              amb: A.ALS,          u: 3, w: 10 },
-  { name: 'labour / delivery',  hosp: H.OBSTETRIC,          amb: A.NEONATAL,     u: 2, w: 12 },
-  { name: 'severe burns',       hosp: H.BURNS,              amb: A.ALS,          u: 3, w: 5  },
-  { name: 'poisoning',          hosp: H.TOXICOL,            amb: A.ALS,          u: 2, w: 7  },
-  { name: 'paediatric emergency', hosp: H.PAEDS,            amb: 0,              u: 1, w: 12 },
-  { name: 'eye injury',         hosp: H.TRAUMA,             amb: 0,              u: 1, w: 8  },
-  { name: 'chest pain',         hosp: H.CARDIAC,            amb: A.ALS,          u: 2, w: 10 },
-  /* Two required specialties at once: the index cannot answer these, so they
-     exercise the live-search fallback path. */
-  { name: 'critical transfer',  hosp: H.ICU | H.CARDIAC,    amb: A.ALS | A.VENT, u: 3, w: 4  },
+  { name: 'road accident',        hosp: H.TRAUMA,          amb: A.ALS | A.VENT, med: 0, qty: 2, u: 3, w: 18 },
+  { name: 'cardiac arrest',       hosp: H.CARDIAC,         amb: A.ALS | A.VENT, med: 1, qty: 2, u: 3, w: 14 },
+  { name: 'stroke',               hosp: H.NEURO,           amb: A.ALS,          med: 2, qty: 1, u: 3, w: 10 },
+  { name: 'labour / delivery',    hosp: H.OBSTETRIC,       amb: A.NEONATAL,     med: 4, qty: 1, u: 2, w: 12 },
+  { name: 'severe burns',         hosp: H.BURNS,           amb: A.ALS,          med: 3, qty: 3, u: 3, w: 5  },
+  { name: 'poisoning',            hosp: H.TOXICOL,         amb: A.ALS,          med: 6, qty: 2, u: 2, w: 7  },
+  { name: 'paediatric emergency', hosp: H.PAEDS,           amb: 0,              med: 5, qty: 1, u: 1, w: 12 },
+  { name: 'eye injury',           hosp: H.TRAUMA,          amb: 0,              med: 0, qty: 1, u: 1, w: 8  },
+  { name: 'chest pain',           hosp: H.CARDIAC,         amb: A.ALS,          med: 1, qty: 1, u: 2, w: 10 },
+  /* Two required specialties at once -- the hardest destination constraint. */
+  { name: 'critical transfer',    hosp: H.ICU | H.CARDIAC, amb: A.ALS | A.VENT, med: 7, qty: 1, u: 3, w: 4  },
 ];
 const CASE_TOTAL = CASES.reduce((a, c) => a + c.w, 0);
 function pickCase() {
@@ -147,11 +149,51 @@ function pickCase() {
   for (const c of CASES) { r -= c.w; if (r <= 0) return c; }
   return CASES[0];
 }
+/* Backlog of requests that could not be served on arrival. Ordered exactly
+ * like the engine's min-max DEPQ: most urgent first, oldest first within a
+ * tier, so a critical case jumps the queue ahead of minor ones already
+ * waiting. Popped whenever a vehicle comes back into service. */
+class Backlog {
+  constructor() { this.a = []; }
+  get size() { return this.a.length; }
+  /* rank: lower is served sooner */
+  static rank(urgency, seq) { return (3 - urgency) * 1e9 + seq; }
+  push(item) {
+    const a = this.a;
+    a.push(item);
+    let i = a.length - 1;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (a[p].rank <= a[i].rank) break;
+      [a[p], a[i]] = [a[i], a[p]]; i = p;
+    }
+  }
+  pop() {
+    const a = this.a;
+    const top = a[0], last = a.pop();
+    if (a.length) {
+      a[0] = last;
+      let i = 0;
+      for (;;) {
+        const l = 2 * i + 1, r = l + 1;
+        let m = i;
+        if (l < a.length && a[l].rank < a[m].rank) m = l;
+        if (r < a.length && a[r].rank < a[m].rank) m = r;
+        if (m === i) break;
+        [a[m], a[i]] = [a[i], a[m]]; i = m;
+      }
+    }
+    return top;
+  }
+}
+
 const sim = {
   running: false, rate: 3, timeScale: 60, nextId: 1,
   villages: [], missions: new Map(),
-  dispatched: 0, failed: 0, slaMet: 0, indexed: 0,
+  dispatched: 0, failed: 0, slaMet: 0, requeued: 0, abandoned: 0,
   lat: [], settled: [], closedEdges: [],
+  backlog: new Backlog(), seq: 0,
+  clock: 10 * 3600000,          /* simulated time of day */
 };
 
 /* The road network is static, so it is pulled from the engine once and reused
@@ -193,53 +235,104 @@ function pct(arr, q) {
   return a[Math.min(a.length - 1, Math.floor(a.length * q))];
 }
 
-async function spawnEmergency() {
+function makeRequest() {
   const v = sim.villages[(Math.random() * sim.villages.length) | 0];
-  if (!v) return;
+  if (!v) return null;
   const kase = pickCase();
-  const urgency = kase.u;
-  const sla = urgency === 3 ? 8 * 60000 : 20 * 60000;
+  const sla = kase.u === 3 ? 8 * 60000 : 20 * 60000;
+  return { v, kase, sla, seq: sim.seq++,
+           rank: Backlog.rank(kase.u, sim.seq) };
+}
+
+/* Try to serve one request. Returns true if a vehicle was committed. */
+async function attempt(req, fromBacklog) {
+  const { v, kase, sla } = req;
   const r = await engine.send(
-    `DISPATCH ${v.node} ${kase.hosp} ${kase.amb} ${urgency} ${sla} 900000 1`);
+    `DISPATCH ${v.node} ${kase.hosp} ${kase.amb} ${kase.med} ${kase.qty} ` +
+    `${kase.u} ${sla} 900000 1`);
 
   if (!r.ok) {
-    sim.failed++;
-    broadcast({ type: 'failed', reason: r.reason || r.error, incident: [v.x, v.y],
-                spec: kase.name, urgency });
-    return;
+    /* An unserved request is not a dropped one: it goes into the urgency
+       queue and is retried the moment capacity frees up. */
+    if (!fromBacklog) {
+      sim.failed++;
+      sim.backlog.push(req);
+      broadcast({ type: 'failed', reason: r.reason || r.error, incident: [v.x, v.y],
+                  spec: kase.name, urgency: kase.u, queued: true,
+                  considered: r.considered || 0 });
+    } else {
+      sim.backlog.push(req);          /* still blocked, keep its place */
+    }
+    return false;
   }
+
   sim.dispatched++;
   if (r.sla_met) sim.slaMet++;
-  if (r.indexed) sim.indexed++;
+  if (fromBacklog) sim.requeued++;
   sim.lat.push(r.latency_us);
   sim.settled.push(r.settled);
   if (sim.lat.length > 400) { sim.lat.shift(); sim.settled.shift(); }
 
-  await engine.send(`COMMIT ${r.amb} ${r.hosp}`);
+  await engine.send(`COMMIT ${r.amb} ${r.hosp} ${kase.med} ${kase.qty}`);
   const id = sim.nextId++;
-  sim.missions.set(id, r.amb);
+  sim.missions.set(id, { amb: r.amb, hosp: r.hosp });
   broadcast({
     type: 'dispatch', id, amb: r.amb, hosp: r.hosp,
     incident: [v.x, v.y], leg1: r.leg1 || [], leg2: r.leg2 || [],
-    t_scene_ms: r.t_scene_ms, t_hosp_ms: r.t_hosp_ms,
-    sla_met: r.sla_met, urgency, spec: kase.name,
-    latency_us: r.latency_us, settled: r.settled, indexed: r.indexed,
-    beds_free: r.beds_free,
+    t_scene_ms: r.t_scene_ms, t_hosp_ms: r.t_hosp_ms, wait_ms: r.wait_ms,
+    t_total_ms: r.t_total_ms, sla_met: r.sla_met,
+    urgency: kase.u, spec: kase.name, med: MED[kase.med], qty: kase.qty,
+    latency_us: r.latency_us, settled: r.settled, considered: r.considered,
+    beds_free: r.beds_free, med_left: r.med_left,
+    rejected: r.rejected || [], fromBacklog: !!fromBacklog,
   });
 
   /* Release the vehicle when its (time-compressed) run completes. */
   const wall = (r.t_scene_ms + r.t_hosp_ms) / sim.timeScale;
   setTimeout(async () => {
-    await engine.send(`RELEASE ${r.amb}`);
+    await engine.send(`RELEASE ${r.amb} ${r.hosp}`);
     sim.missions.delete(id);
     broadcast({ type: 'release', id, amb: r.amb });
+    drainBacklog();                   /* capacity freed -- serve the queue */
   }, Math.max(500, Math.min(wall, 60000)));
+  return true;
+}
+
+async function spawnEmergency() {
+  const req = makeRequest();
+  if (req) await attempt(req, false);
+}
+
+/* Pop in urgency order and retry. Stops at the first request that still
+   cannot be served, so one permanently-blocked case does not spin. */
+let draining = false;
+async function drainBacklog() {
+  if (draining || !sim.backlog.size) return;
+  draining = true;
+  try {
+    for (let i = 0; i < 8 && sim.backlog.size; i++) {
+      const req = sim.backlog.pop();
+      const served = await attempt(req, true);
+      if (!served) break;
+      broadcast({ type: 'log', level: 'ok',
+        text: `backlog cleared: ${req.kase.name} (U${req.kase.u}) dispatched after waiting` });
+    }
+  } finally { draining = false; }
 }
 
 setInterval(() => {
   if (!sim.running) return;
   for (let i = 0; i < sim.rate; i++) spawnEmergency();
 }, 1000);
+
+/* Advance the simulated clock so doctor shifts actually turn over during a
+   demo: 60x compression puts a full 24h day in 24 real minutes. */
+setInterval(async () => {
+  if (!sim.running) return;
+  sim.clock = (sim.clock + 2000 * sim.timeScale) % 86400000;
+  await engine.send(`CLOCK ${sim.clock}`);
+  drainBacklog();
+}, 2000);
 
 setInterval(async () => {
   if (!clients.size) return;
@@ -249,9 +342,10 @@ setInterval(async () => {
     engine: s,
     running: sim.running, rate: sim.rate,
     dispatched: sim.dispatched, failed: sim.failed,
-    active: sim.missions.size,
+    backlog: sim.backlog.size, requeued: sim.requeued,
+    active: sim.missions.size, clock: sim.clock,
     slaPct: sim.dispatched ? (100 * sim.slaMet) / sim.dispatched : 0,
-    indexPct: sim.dispatched ? (100 * sim.indexed) / sim.dispatched : 0,
+
     p50: pct(sim.lat, 0.5), p99: pct(sim.lat, 0.99),
     meanSettled: sim.settled.length
       ? sim.settled.reduce((a, b) => a + b, 0) / sim.settled.length : 0,
@@ -284,6 +378,18 @@ async function onCommand(msg) {
     const cmds = sim.closedEdges.splice(0).map((e) => `OPEN ${e}`);
     if (cmds.length) await engine.batch(cmds);
     broadcast({ type: 'log', level: 'ok', text: `${cmds.length} roads reopened` });
+  } else if (m.type === 'restock') {
+    const r = await engine.send('RESTOCK 999999 0 999999');
+    for (let i = 1; i < 8; i++) await engine.send(`RESTOCK 999999 ${i} 999999`);
+    broadcast({ type: 'log', level: 'ok', text: 'all medicine batches replenished to capacity' });
+    drainBacklog();
+  } else if (m.type === 'clock') {
+    sim.clock = (m.value | 0) % 86400000;
+    const r = await engine.send(`CLOCK ${sim.clock}`);
+    broadcast({ type: 'log', level: 'warn',
+      text: `clock set to ${String(Math.floor(sim.clock / 3600000)).padStart(2, '0')}:00 — `
+          + `${r.docs_on_duty} doctors on duty across ${r.staffed_departments} departments` });
+    drainBacklog();
   } else if (m.type === 'rebuild') {
     const r = await engine.send('REBUILD');
     broadcast({ type: 'log', level: 'ok',

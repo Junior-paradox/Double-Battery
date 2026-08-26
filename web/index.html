@@ -58,6 +58,24 @@
     box-shadow:0 0 0 3px rgba(248,81,73,.18)}
   .hosp.low{background:#d29922;border-color:#f0c674;box-shadow:0 0 0 3px rgba(210,153,34,.2)}
   .hosp.full{background:#3d4450;border-color:#5b6472;box-shadow:none}
+  .clock{color:var(--dim);font-size:11px;margin:-9px 0 12px}
+  .clock b{color:var(--ink);font-variant-numeric:tabular-nums}
+  .meter{height:4px;background:#0b111a;border-radius:3px;overflow:hidden;margin:3px 0 7px}
+  .meter i{display:block;height:100%;width:0;background:var(--ok);
+    border-radius:3px;transition:width .4s}
+  .meter i.amber{background:var(--hosp)} .meter i.bad{background:var(--bad)}
+  #why{position:absolute;top:14px;left:326px;width:330px;padding:13px 15px;z-index:600}
+  .dimtext{color:var(--dim);font-size:11.5px}
+  .wrow{display:flex;gap:8px;align-items:baseline;padding:3.5px 0;font-size:11.5px;
+    border-bottom:1px solid #16202c}
+  .wrow:last-child{border-bottom:0}
+  .wrow .km{color:var(--dim);font-variant-numeric:tabular-nums;min-width:52px}
+  .wrow .nm{min-width:74px}
+  .wrow.pick{color:#7ee787;font-weight:650}
+  .wrow.rej{color:#94a7bd}
+  .wsum{margin-top:8px;padding-top:8px;border-top:1px solid var(--line);
+    font-size:11.5px;color:var(--dim)}
+  .wsum b{color:var(--ink);font-variant-numeric:tabular-nums}
   .zoomhint{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);z-index:600;
     padding:6px 12px;font-size:11px;color:var(--dim)}
 </style>
@@ -69,6 +87,7 @@
 <div id="hud" class="panel">
   <h1>HealthWay</h1>
   <div class="sub">live emergency dispatch · 50,000 node road network</div>
+  <div class="clock">simulated time <b id="clock">10:00</b></div>
   <div class="grid2">
     <div class="card"><div class="k">p50 latency</div><div class="big" id="p50">—</div></div>
     <div class="card"><div class="k">p99 latency</div><div class="big" id="p99">—</div></div>
@@ -76,15 +95,23 @@
   <h2>engine</h2>
   <div class="row"><span>dispatches served</span><span id="served">—</span></div>
   <div class="row"><span>nodes settled / query</span><span id="settled">—</span></div>
-  <div class="row"><span>index hit rate</span><span id="idx">—</span></div>
+  <div class="row"><span>hospitals evaluated</span><span id="considered">—</span></div>
   <div class="row"><span>roads closed</span><span id="closed">—</span></div>
-  <h2>fleet &amp; capacity</h2>
+  <h2>capacity</h2>
   <div class="row"><span>ambulances busy</span><span id="busy">—</span></div>
+  <div class="meter"><i id="mBusy"></i></div>
   <div class="row"><span>hospital beds free</span><span id="beds">—</span></div>
+  <div class="meter"><i id="mBeds"></i></div>
+  <div class="row"><span>medicine in stock</span><span id="meds">—</span></div>
+  <div class="meter"><i id="mMeds" class="amber"></i></div>
+  <div class="row"><span>doctors on duty</span><span id="docs">—</span></div>
+  <h2>queues</h2>
   <div class="row"><span>missions in flight</span><span id="active">—</span></div>
+  <div class="row"><span>waiting for a vehicle</span><span id="backlog">—</span></div>
+  <div class="row"><span>served after waiting</span><span id="requeued">—</span></div>
   <h2>outcomes</h2>
   <div class="row"><span>dispatched</span><span id="disp">—</span></div>
-  <div class="row"><span>unroutable</span><span id="fail">—</span></div>
+  <div class="row"><span>queued on arrival</span><span id="fail">—</span></div>
   <div class="row"><span>response SLA met</span><span id="sla">—</span></div>
 </div>
 
@@ -99,6 +126,10 @@
   <button id="close" class="danger">close 2000 roads</button>
   <button id="rebuild">rebuild hospital index</button>
   <button id="reopen">reopen all roads</button>
+  <h2>supply &amp; staffing</h2>
+  <button id="restock">restock all medicine</button>
+  <button id="night">jump to 03:00 (night shift)</button>
+  <button id="day">jump to 10:00 (day shift)</button>
   <h2>view</h2>
   <button id="fit">reset view</button>
 </div>
@@ -254,6 +285,7 @@ function onDispatch(m) {
   const unit = L.circleMarker(l1[0] || l2[0], { renderer: unitCanvas, radius: 5,
     color: '#fff', weight: 1.6, fillColor: '#3b9dff', fillOpacity: 1 }).addTo(unitLayer);
 
+  lastConsidered = m.considered || lastConsidered;
   const dur = (m.t_scene_ms + m.t_hosp_ms) / 60;      /* 60x time compression */
   missions.set(m.id, { l1, l2, m1: pathLen(l1), m2: pathLen(l2), unit, g,
     t0: performance.now(), dur: Math.max(500, Math.min(dur, 60000)),
@@ -262,14 +294,41 @@ function onDispatch(m) {
   const dot = fleetDots.get(m.amb);
   if (dot) dot.setStyle({ fillColor: '#3b9dff', radius: 4 });
   updateHosp(m.hosp, m.beds_free);
+  renderWhy(m);
 
+  const passed = m.rejected.length
+    ? ` · passed ${m.rejected.length} closer (${m.rejected[0].why})` : '';
   logLine(
     `<span class="tag u${m.urgency}">U${m.urgency}</span> ${m.spec} → amb ${m.amb}, ` +
-    `hosp ${m.hosp} · ${(m.t_scene_ms/60000).toFixed(1)} min to scene` +
+    `hosp ${m.hosp} · ${(m.t_total_ms/60000).toFixed(1)} min total${passed}` +
+    (m.fromBacklog ? ' <b style="color:#3fb950">[from queue]</b>' : '') +
     (m.sla_met ? '' : ' <b style="color:#f85149">SLA miss</b>') +
     ` <span class="t">${m.latency_us.toFixed(0)}µs</span>`,
     m.sla_met ? 'ok' : 'warn');
 }
+/* The cost-transparency panel. The engine hands back every closer hospital it
+   passed over and the reason, so this is a readout, not a reconstruction. */
+function renderWhy(m) {
+  const mins = (ms) => (ms / 60000).toFixed(1) + ' min';
+  let html = `<div class="dimtext" style="margin-bottom:7px">`
+    + `<b style="color:var(--ink)">${m.spec}</b> · urgency ${m.urgency} · `
+    + `needs ${m.qty}× ${m.med}</div>`;
+  for (const r of m.rejected) {
+    html += `<div class="wrow rej"><span class="km">${mins(r.travel_ms)}</span>`
+          + `<span class="nm">hospital ${r.hosp}</span>`
+          + `<span>✕ ${r.why}</span></div>`;
+  }
+  html += `<div class="wrow pick"><span class="km">${mins(m.t_hosp_ms)}</span>`
+        + `<span class="nm">hospital ${m.hosp}</span><span>✓ chosen</span></div>`;
+  html += `<div class="wsum">`
+        + `response <b>${mins(m.t_scene_ms)}</b> + transport <b>${mins(m.t_hosp_ms)}</b>`
+        + ` + queue <b>${mins(m.wait_ms)}</b> = total cost <b>${mins(m.t_total_ms)}</b><br>`
+        + `${m.considered} hospitals evaluated in <b>${m.latency_us.toFixed(0)} µs</b>`
+        + (m.rejected.length ? '' : ' · nearest was already the best')
+        + `</div>`;
+  $('whybody').innerHTML = html;
+}
+
 function updateHosp(id, free) {
   const mk = hospMark.get(id); if (!mk) return;
   const total = hospBeds.get(id) || 1;
@@ -290,7 +349,9 @@ function onFailed(m) {
       weight: 2.5, fillOpacity: 0, dashArray: '3,3' }).addTo(routeLayer);
     setTimeout(() => routeLayer.removeLayer(x), 4500);
   }
-  logLine(`<span class="tag u3">U${m.urgency}</span> ${m.spec} — <b style="color:#f85149">${m.reason}</b>`, 'bad');
+  logLine(`<span class="tag u${m.urgency}">U${m.urgency}</span> ${m.spec} — `
+        + `<b style="color:#f85149">${m.reason}</b>`
+        + (m.queued ? ' <span style="color:#d29922">→ queued by urgency</span>' : ''), 'bad');
 }
 
 function tick(now) {
@@ -312,17 +373,33 @@ requestAnimationFrame(tick);
 
 /* ---------- telemetry ---------- */
 const $ = (id) => document.getElementById(id);
+let lastConsidered = 0;
+function meter(id, frac, warnBelow) {
+  const el = $(id); if (!el) return;
+  el.style.width = Math.max(0, Math.min(1, frac)) * 100 + '%';
+  el.className = frac < warnBelow / 2 ? 'bad' : frac < warnBelow ? 'amber' : '';
+}
 function onTelemetry(m) {
   const e = m.engine || {};
   $('p50').textContent = m.p50 ? m.p50.toFixed(0) + 'µs' : '—';
   $('p99').textContent = m.p99 ? m.p99.toFixed(0) + 'µs' : '—';
   $('served').textContent = (e.served || 0).toLocaleString();
   $('settled').textContent = m.meanSettled ? m.meanSettled.toFixed(0) : '—';
-  $('idx').textContent = m.dispatched ? m.indexPct.toFixed(0) + '%' : '—';
+  $('considered').textContent = lastConsidered || '—';
   $('closed').textContent = (m.closedRoads || 0).toLocaleString();
   $('busy').textContent = `${e.busy || 0} / ${e.ambulances || 0}`;
+  meter('mBusy', 1 - (e.busy || 0) / Math.max(1, e.ambulances || 1), .25);
   $('beds').textContent = (e.beds_free || 0).toLocaleString();
+  meter('mBeds', (e.beds_free || 0) / Math.max(1, e.beds_total || e.beds_free || 1), .25);
+  $('meds').textContent = `${(e.med || 0).toLocaleString()} / ${(e.med_cap || 0).toLocaleString()}`;
+  meter('mMeds', (e.med || 0) / Math.max(1, e.med_cap || 1), .3);
+  $('docs').textContent = e.doctors_on_duty || '—';
+  const ms = m.clock || 0;
+  $('clock').textContent = String(Math.floor(ms / 3600000)).padStart(2, '0') + ':'
+    + String(Math.floor(ms / 60000) % 60).padStart(2, '0');
   $('active').textContent = m.active;
+  $('backlog').textContent = m.backlog || 0;
+  $('requeued').textContent = (m.requeued || 0).toLocaleString();
   $('disp').textContent = m.dispatched.toLocaleString();
   $('fail').textContent = m.failed.toLocaleString();
   const sla = m.slaPct;
@@ -356,6 +433,9 @@ $('close').onclick   = () => send({ type: 'close', value: 2000 });
 $('reopen').onclick  = () => send({ type: 'reopen' });
 $('rebuild').onclick = () => send({ type: 'rebuild' });
 $('fit').onclick     = () => bounds && map.fitBounds(bounds, { padding: [30, 30] });
+$('restock').onclick = () => send({ type: 'restock' });
+$('night').onclick   = () => send({ type: 'clock', value: 3 * 3600000 });
+$('day').onclick     = () => send({ type: 'clock', value: 10 * 3600000 });
 </script>
 </body>
 </html>

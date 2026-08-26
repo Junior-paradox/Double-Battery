@@ -1,7 +1,7 @@
 CC      ?= gcc
 CFLAGS  ?= -O3 -march=native -flto -std=c11 -Wall -Wextra -Wno-unused-parameter
 LDFLAGS ?= -lm -lpthread -flto
-CORE    := src/graph.c src/dispatch.c src/hindex.c
+CORE    := src/graph.c src/dispatch.c src/htable.c
 COBJ    := $(CORE:.c=.o)
 
 all: bench server

@@ -1,7 +1,7 @@
 #define _GNU_SOURCE
 #include "dispatch.h"
 #include "depq.h"
-#include "hindex.h"
+#include "htable.h"
 #include <pthread.h>
 #include <math.h>
 
@@ -11,6 +11,7 @@
 #define N_HOSP 60
 #define N_AMB  200
 #define N_VILLAGE 5000
+#define DOCS_PER_HOSP 6
 #define SEED_GRAPH 0xC0FFEEull
 #define SEED_WORLD 0xBEEF01ull
 #define SEED_REQ   0x515Aull
@@ -48,6 +49,13 @@ static void rule(const char *t) {
     printf("\033[0m\n");
 }
 
+static const char *spec_label(uint32_t mask) {
+    static const char *N[N_SPEC] = { "trauma", "cardiac", "neuro", "burns",
+                                     "obstetric", "paeds", "toxicology", "icu" };
+    for (uint32_t i = 0; i < N_SPEC; i++) if (mask & (1u << i)) return N[i];
+    return "any";
+}
+
 static void gen_requests(Request *r, uint32_t n, const World *w, uint64_t seed) {
     Rng rng; rng_seed(&rng, seed);
     for (uint32_t i = 0; i < n; i++) {
@@ -58,13 +66,15 @@ static void gen_requests(Request *r, uint32_t n, const World *w, uint64_t seed) 
         r[i].need_amb = k < 5 ? 0 : (k < 8 ? CAP_ALS : CAP_VENTILATOR);
         r[i].urgency  = (uint8_t)rng_u32(&rng, 4);
         r[i].sla_ms   = r[i].urgency == 3 ? 8u * 60000u : 20u * 60000u;
+        r[i].need_med = (uint8_t)rng_u32(&rng, N_MED);
+        r[i].med_qty  = 1 + rng_u32(&rng, 2);
         r[i].max_reach_ms = 0;   /* unbounded unless a section sets a horizon */
     }
 }
 
 /* ================= concurrency harness ================= */
 typedef struct {
-    const Graph *g; const World *w; const Request *req;
+    const Graph *g; const World *w; const Request *req; const HospTable *t;
     uint32_t lo, hi; uint64_t ns; uint64_t checksum;
 } Job;
 
@@ -76,7 +86,7 @@ static void *worker(void *arg) {
     uint64_t t0 = now_ns(), sum = 0;
     for (uint32_t i = j->lo; i < j->hi; i++) {
         Decision d;
-        dispatch_fast(j->g, &back, &fwd, j->w, &j->req[i], &d);
+        dispatch_table(j->g, &back, j->w, j->t, &j->req[i], &d);
         sum += d.t_total == INF32 ? 0 : d.t_total;
     }
     j->ns = now_ns() - t0;
@@ -93,7 +103,7 @@ static void scaling_row(uint32_t gw, uint32_t gh) {
     tb = now_ns() - tb;
     uint32_t V = g.n_nodes;
     uint32_t nh = V / 833 + 1, na = V / 250 + 1;
-    world_build(&w, &g, nh, na, V / 10 + 1, SEED_WORLD);
+    world_build(&w, &g, nh, na, V / 10 + 1, DOCS_PER_HOSP, SEED_WORLD);
 
     Search back, fwd;
     search_init(&back, V); search_init(&fwd, V);
@@ -101,18 +111,24 @@ static void scaling_row(uint32_t gw, uint32_t gh) {
     Request *req = xmalloc(sizeof(Request) * NQ);
     gen_requests(req, NQ, &w, SEED_REQ);
 
-    for (uint32_t i = 0; i < 200; i++) { Decision d; dispatch_fast(&g, &back, &fwd, &w, &req[i], &d); }
-    back.settled = fwd.settled = 0;
+    HospTable ht2; htable_init(&ht2, V, nh);
+    uint64_t tt = now_ns();
+    htable_build(&ht2, &g, &w, &fwd);
+    tt = now_ns() - tt;
+
+    for (uint32_t i = 0; i < 200; i++) { Decision d; dispatch_table(&g, &back, &w, &ht2, &req[i], &d); }
+    back.settled = 0;
     uint64_t t0 = now_ns();
-    for (uint32_t i = 0; i < NQ; i++) { Decision d; dispatch_fast(&g, &back, &fwd, &w, &req[i], &d); }
+    for (uint32_t i = 0; i < NQ; i++) { Decision d; dispatch_table(&g, &back, &w, &ht2, &req[i], &d); }
     double us = (double)(now_ns() - t0) / 1000.0 / NQ;
-    double settled = (double)(back.settled + fwd.settled) / NQ;
+    double settled = (double)back.settled / NQ;
 
-    printf("  V=%7u  E=%7u  build %7.1f ms  graph %6.2f MB  mean query %7.1f us"
-           "  settled/query %8.0f (%.2f%% of V)\n",
-           V, g.n_edges, tb / 1e6, graph_bytes(&g) / 1048576.0, us, settled,
-           100.0 * settled / (2.0 * V));
+    printf("  V=%7u E=%7u H=%4u | query %7.1f us  settled %6.0f (%.2f%% of V) |"
+           " table %6.1f MB built in %7.1f ms\n",
+           V, g.n_edges, nh, us, settled, 100.0 * settled / V,
+           htable_bytes(&ht2) / 1048576.0, tt / 1e6);
 
+    htable_free(&ht2);
     free(req); search_free(&back); search_free(&fwd);
     world_free(&w); graph_free(&g);
 }
@@ -130,7 +146,7 @@ int main(void) {
     graph_build_grid(&g, GRID_W, GRID_H, SEED_GRAPH);
     uint64_t t_graph = now_ns() - t0;
     t0 = now_ns();
-    world_build(&w, &g, N_HOSP, N_AMB, N_VILLAGE, SEED_WORLD);
+    world_build(&w, &g, N_HOSP, N_AMB, N_VILLAGE, DOCS_PER_HOSP, SEED_WORLD);
     uint64_t t_world = now_ns() - t0;
 
     Search back, fwd, tmp;
@@ -142,6 +158,15 @@ int main(void) {
     printf("  directed edges       %10u\n", g.n_edges);
     printf("  hospitals            %10u   ambulances %6u   villages %6u\n",
            w.n_hosp, w.n_amb, w.n_village);
+    {
+        uint32_t on = 0, cover = 0;
+        for (uint32_t i = 0; i < w.n_hosp; i++) {
+            on += w.hosp[i].docs_on_duty;
+            cover += __builtin_popcount(w.hosp[i].on_duty_mask);
+        }
+        printf("  doctors              %10u   on duty at 10:00 %5u   staffed departments %4u\n",
+               w.n_doc, on, cover);
+    }
     printf("  graph build          %10.2f ms\n", t_graph / 1e6);
     printf("  world build          %10.2f ms\n", t_world / 1e6);
     printf("  graph memory         %10.2f MB   (O(V+E), flat arrays)\n",
@@ -156,7 +181,7 @@ int main(void) {
     gen_requests(req, N_QUERIES, &w, SEED_REQ);
 
     /* ---------- 2. correctness ---------- */
-    rule("2. correctness — early-exit result must equal exhaustive search");
+    rule("2. correctness — bounded search must equal exhaustive search");
     uint32_t mismatch = 0, unreachable = 0;
     for (uint32_t i = 0; i < N_VERIFY; i++) {
         Decision a, b, c;
@@ -164,8 +189,7 @@ int main(void) {
         dispatch_full_dijkstra(&g, &back, &fwd, &w, &req[i], &b);
         dispatch_naive_astar(&g, &tmp, &w, &req[i], &c);
         if (!a.ok) { unreachable++; continue; }
-        if (a.t_to_scene != b.t_to_scene || a.t_to_hosp != b.t_to_hosp ||
-            a.t_to_scene != c.t_to_scene || a.t_to_hosp != c.t_to_hosp) mismatch++;
+        if (a.t_total != b.t_total || a.t_total != c.t_total) mismatch++;
     }
     printf("  %u requests cross-checked against full Dijkstra AND per-candidate A*\n", N_VERIFY);
     printf("  ETA mismatches: %u    unreachable: %u    -> %s\n", mismatch, unreachable,
@@ -187,7 +211,7 @@ int main(void) {
         ok += d.ok; sla_ok += d.sla_met;
     }
     twall = now_ns() - twall;
-    print_stats("dispatch_fast (2x early-exit)", stats_of(lat, N_QUERIES));
+    print_stats("dispatch_fast (search, wait-aware)", stats_of(lat, N_QUERIES));
     printf("  throughput  %10.0f dispatches/sec (1 core)\n", N_QUERIES / (twall / 1e9));
     printf("  nodes settled/query %6.0f  (ambulance search %.0f + hospital search %.0f)\n",
            (double)(back.settled + fwd.settled) / N_QUERIES,
@@ -209,51 +233,66 @@ int main(void) {
         s = now_ns(); dispatch_naive_astar(&g, &tmp, &w, &req[i], &d);          l3[i] = now_ns() - s;
     }
     Stats s1 = stats_of(l1, N_BASELINE), s2 = stats_of(l2, N_BASELINE), s3 = stats_of(l3, N_BASELINE);
-    print_stats("A: early-exit Dijkstra x2  [ours]", s1);
+    print_stats("A: bounded Dijkstra x2 (search)", s1);
     print_stats("B: full Dijkstra x2 + scan", s2);
     print_stats("C: A* per ambulance + hospital", s3);
     printf("  speedup vs B  %6.1fx      speedup vs C  %8.1fx\n", s2.mean / s1.mean, s3.mean / s1.mean);
 
-    /* ---------- 4b. index-accelerated ---------- */
-    rule("4b. hospital proximity index — trading 3 MB for the hospital search");
-    HospIndex hi; hindex_init(&hi, g.n_nodes);
+    /* ---------- 4b. hospital distance table ---------- */
+    rule("4b. hospital distance table — O(H) exact scan, any cost function");
+    HospTable ht; htable_init(&ht, g.n_nodes, w.n_hosp);
     t0 = now_ns();
-    hindex_build(&hi, &g, &w, &tmp);
+    htable_build(&ht, &g, &w, &tmp);
     uint64_t t_idx = now_ns() - t0;
-    printf("  build: 8 multi-source Dijkstras in %.2f ms   index memory %.2f MB\n",
-           t_idx / 1e6, hindex_bytes(&hi) / 1048576.0);
+    printf("  build: %u backward Dijkstras in %.1f ms   table memory %.2f MB\n",
+           w.n_hosp, t_idx / 1e6, htable_bytes(&ht) / 1048576.0);
 
     uint32_t idx_mismatch = 0;
     for (uint32_t i = 0; i < N_VERIFY; i++) {
-        Decision a, b; uint32_t fb = 0;
+        Decision a, b2;
         dispatch_fast(&g, &back, &fwd, &w, &req[i], &a);
-        dispatch_indexed(&g, &back, &fwd, &w, &hi, &req[i], &b, &fb);
-        if (a.t_to_hosp != b.t_to_hosp || a.t_to_scene != b.t_to_scene) idx_mismatch++;
+        dispatch_table(&g, &back, &w, &ht, &req[i], &b2);
+        if (a.t_total != b2.t_total) idx_mismatch++;
     }
-    printf("  cross-check vs live search over %u requests: %u mismatches -> %s\n",
+    printf("  cross-check vs bounded search over %u requests: %u mismatches -> %s\n",
            N_VERIFY, idx_mismatch,
            idx_mismatch ? "\033[31mFAIL\033[0m" : "\033[32mexact\033[0m");
 
-    uint32_t fb = 0;
-    back.settled = fwd.settled = 0;
-    for (uint32_t i = 0; i < 500; i++) { Decision d; dispatch_indexed(&g, &back, &fwd, &w, &hi, &req[i], &d, &fb); }
-    back.settled = fwd.settled = 0; fb = 0;
+    back.settled = 0;
+    for (uint32_t i = 0; i < 500; i++) { Decision d; dispatch_table(&g, &back, &w, &ht, &req[i], &d); }
+    back.settled = 0;
     uint64_t tw2 = now_ns();
+    uint32_t explained = 0;
     for (uint32_t i = 0; i < N_QUERIES; i++) {
         Decision d;
         uint64_t s = now_ns();
-        dispatch_indexed(&g, &back, &fwd, &w, &hi, &req[i], &d, &fb);
+        dispatch_table(&g, &back, &w, &ht, &req[i], &d);
         lat[i] = now_ns() - s;
+        explained += d.n_rejected;
     }
     tw2 = now_ns() - tw2;
-    Stats si = stats_of(lat, N_QUERIES);
-    print_stats("dispatch_indexed", si);
-    printf("  throughput  %10.0f dispatches/sec (1 core)   fallback to live search %u/%u (%.1f%%)\n",
-           N_QUERIES / (tw2 / 1e9), fb, N_QUERIES, 100.0 * fb / N_QUERIES);
-    printf("  nodes settled/query %6.0f  (ambulance %.0f + hospital %.0f)  vs %d before\n",
-           (double)(back.settled + fwd.settled) / N_QUERIES,
-           (double)back.settled / N_QUERIES, (double)fwd.settled / N_QUERIES, 2013);
-    printf("  index amortises after %.0f queries\n", t_idx / (double)(twall / (double)N_QUERIES - tw2 / (double)N_QUERIES));
+    print_stats("dispatch_table", stats_of(lat, N_QUERIES));
+    printf("  throughput  %10.0f dispatches/sec (1 core)\n", N_QUERIES / (tw2 / 1e9));
+    printf("  nodes settled/query %6.0f  (ambulance search only; hospital side is O(H))\n",
+           (double)back.settled / N_QUERIES);
+    printf("  rejected alternatives recorded for the decision log: %.1f per dispatch\n",
+           (double)explained / N_QUERIES);
+
+    /* a worked example, in the shape of the problem statement's scenario */
+    for (uint32_t i = 0; i < N_QUERIES; i++) {
+        Decision d;
+        dispatch_table(&g, &back, &w, &ht, &req[i], &d);
+        if (!d.ok || d.n_rejected < 2) continue;
+        printf("\n  worked example — request needs %s, medicine batch %u x%u\n",
+               spec_label(req[i].need_hosp), req[i].need_med, req[i].med_qty);
+        for (uint32_t k = 0; k < d.n_rejected; k++)
+            printf("    hospital %2u at %5.1f min  REJECTED — %s\n",
+                   d.rejected[k].hosp, d.rejected[k].travel_ms / 60000.0,
+                   reject_name(d.rejected[k].reason));
+        printf("    hospital %2u at %5.1f min  CHOSEN   — queue %.1f min, total %.1f min\n",
+               d.hosp, d.t_to_hosp / 60000.0, d.wait_ms / 60000.0, d.t_total / 60000.0);
+        break;
+    }
 
     /* ---------- 5. dynamic closures ---------- */
     rule("5. dynamic road closures (graph mutates between queries)");
@@ -270,10 +309,16 @@ int main(void) {
            NC, t_close / 1e6, (double)t_close / (2.0 * NC));
 
     uint32_t NQ2 = 5000, no_route = 0;
+    /* The graph changed, so the distance table is now stale. Rebuild it --
+       this is the real cost of trading search for a precomputed table. */
+    t0 = now_ns();
+    htable_build(&ht, &g, &w, &tmp);
+    printf("  distance table rebuilt in %.1f ms (stale the moment a road moves)\n",
+           (now_ns() - t0) / 1e6);
     for (uint32_t i = 0; i < NQ2; i++) {
         Decision d;
         uint64_t s = now_ns();
-        dispatch_fast(&g, &back, &fwd, &w, &req[i], &d);
+        dispatch_table(&g, &back, &w, &ht, &req[i], &d);
         lat[i] = now_ns() - s;
         if (!d.ok) no_route++;
     }
@@ -282,8 +327,9 @@ int main(void) {
 
     t0 = now_ns();
     for (uint32_t i = 0; i < NC; i++) graph_open_road(&g, closed[i]);
-    printf("  reopened %u roads in %.3f ms (no re-preprocessing, no cache rebuild)\n",
+    printf("  reopened %u roads in %.3f ms (edge weights are O(1); the table is not)\n",
            NC, (now_ns() - t0) / 1e6);
+    htable_build(&ht, &g, &w, &tmp);
 
     /* ---------- 6. stateful surge ---------- */
     rule("6. stateful surge — fleet depletion + preemptive backlog (DEPQ)");
@@ -301,25 +347,26 @@ int main(void) {
             if (i % 3 == 2) {
                 for (uint32_t a = 0; a < w.n_amb; a++)
                     if (w.amb[a].busy) { w.amb[a].busy = 0; freed++; break; }
+                
                 while (q.n && freed) {
                     uint64_t k = depq_pop_min(&q);      /* most urgent first */
                     Request rq = req[depq_seq(k)];
                     rq.max_reach_ms = bounded ? HORIZON : 0;
                     Decision d;
-                    dispatch_fast(&g, &back, &fwd, &w, &rq, &d);
+                    dispatch_table(&g, &back, &w, &ht, &rq, &d);
                     if (!d.ok) { depq_push(&q, k); break; }
-                    decision_commit(&w, &d); dispatched++; freed--;
+                    decision_commit(&w, &d, &rq); dispatched++; freed--;
                 }
             }
             Request rq = req[i];
             rq.max_reach_ms = bounded ? HORIZON : 0;
             Decision d;
             uint64_t s = now_ns();
-            dispatch_fast(&g, &back, &fwd, &w, &rq, &d);
+            dispatch_table(&g, &back, &w, &ht, &rq, &d);
             uint64_t el = now_ns() - s;
             if (el > worst) worst = el;
             lat[i] = el;
-            if (d.ok) { decision_commit(&w, &d); dispatched++; }
+            if (d.ok) { decision_commit(&w, &d, &rq); dispatched++; }
             else       { depq_push(&q, depq_key(rq.urgency, i)); queued++; }
         }
         uint64_t t_surge = now_ns() - t0;
@@ -331,8 +378,8 @@ int main(void) {
                NS, t_surge / 1e6, dispatched, queued, q.n, busy, w.n_amb);
         depq_free(&q);
     }
-    printf("  once the fleet saturates, an unbounded 'early exit' has nothing to exit on\n"
-           "  and degenerates to a full O(E log V) sweep. The horizon keeps the tail flat.\n");
+    printf("  the hospital side is O(H) either way; what degenerates under saturation is\n"
+           "  the AMBULANCE search, which has no free vehicle to exit on. The horizon caps it.\n");
 
     /* DEPQ microbenchmark */
     {
@@ -364,7 +411,7 @@ int main(void) {
         uint32_t per = N_QUERIES / nt;
         uint64_t s = now_ns();
         for (int t = 0; t < nt; t++) {
-            jobs[t] = (Job){ &g, &w, req, (uint32_t)t * per,
+            jobs[t] = (Job){ &g, &w, req, &ht, (uint32_t)t * per,
                              (t == nt - 1) ? N_QUERIES : (uint32_t)(t + 1) * per, 0, 0 };
             pthread_create(&th[t], NULL, worker, &jobs[t]);
         }
@@ -388,7 +435,7 @@ int main(void) {
     scaling_row(360, 280);
     scaling_row(500, 400);
 
-    hindex_free(&hi);
+    htable_free(&ht);
     free(lat); free(l1); free(l2); free(l3); free(closed); free(req);
     search_free(&back); search_free(&fwd); search_free(&tmp);
     world_free(&w); graph_free(&g);
