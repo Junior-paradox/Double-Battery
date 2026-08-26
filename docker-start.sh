@@ -18,4 +18,21 @@ until node -e "require('net').connect(9090,'127.0.0.1')
 done
 echo "engine ready, starting bridge on port ${PORT:-8080}"
 
-exec node web/bridge.js
+# NOT `exec node`: the bridge would become PID 1 and the engine would be left
+# unsupervised behind it. If the engine then died, the container stayed "up"
+# -- still serving HTML, still accepting websockets, every dispatch call
+# hanging forever -- so the platform's health check passed and nothing ever
+# restarted it. Supervise both instead and exit when either one goes, letting
+# the platform restart a container that is genuinely broken.
+node web/bridge.js &
+BRIDGE_PID=$!
+trap 'kill $ENGINE_PID $BRIDGE_PID 2>/dev/null || true' TERM INT
+
+while kill -0 "$ENGINE_PID" 2>/dev/null && kill -0 "$BRIDGE_PID" 2>/dev/null; do
+  sleep 2
+done
+
+kill -0 "$ENGINE_PID" 2>/dev/null || echo "engine exited -- taking the container down" >&2
+kill -0 "$BRIDGE_PID" 2>/dev/null || echo "bridge exited -- taking the container down" >&2
+kill "$ENGINE_PID" "$BRIDGE_PID" 2>/dev/null || true
+exit 1

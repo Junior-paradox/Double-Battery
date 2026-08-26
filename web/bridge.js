@@ -21,37 +21,90 @@ const HTTP_PORT = Number(process.env.PORT || 8080);
 const POOL_SIZE = 4;
 
 /* ---------------- engine connection pool ---------------- */
+const CMD_TIMEOUT_MS = 20000;
+
 class EngineConn {
   constructor() {
     this.pending = [];
     this.buf = '';
-    this.ready = new Promise((res, rej) => {
-      this.sock = net.createConnection(ENGINE_PORT, ENGINE_HOST, res);
-      this.sock.on('error', rej);
+    this.up = false;
+    /* Resolves on the FIRST successful connect; used only to gate startup. */
+    this.ready = new Promise((res, rej) => { this._res = res; this._rej = rej; });
+    this.open();
+  }
+
+  open() {
+    this.buf = '';
+    this.retrying = false;
+    const sock = this.sock = net.createConnection(ENGINE_PORT, ENGINE_HOST, () => {
+      if (sock !== this.sock) return;
+      this.up = true;
+      this._res();
     });
-    this.sock.setNoDelay(true);
-    this.sock.setEncoding('utf8');
-    this.sock.on('data', (chunk) => {
+    sock.setNoDelay(true);
+    sock.setEncoding('utf8');
+    sock.on('data', (chunk) => {
+      /* A superseded socket must never touch the FIFO -- its replies belong
+         to commands that were already failed, and draining them here would
+         mispair every subsequent response. */
+      if (sock !== this.sock) return;
       this.buf += chunk;
       let i;
       while ((i = this.buf.indexOf('\n')) >= 0) {
         const line = this.buf.slice(0, i);
         this.buf = this.buf.slice(i + 1);
-        const resolve = this.pending.shift();
-        if (!resolve) continue;
-        try { resolve(JSON.parse(line)); }
-        catch { resolve({ ok: false, error: 'bad json from engine' }); }
+        const p = this.pending.shift();
+        if (!p) continue;
+        clearTimeout(p.timer);
+        try { p.resolve(JSON.parse(line)); }
+        catch { p.resolve({ ok: false, error: 'bad json from engine' }); }
       }
     });
-    this.sock.on('close', () => {
-      this.pending.splice(0).forEach((r) => r({ ok: false, error: 'engine closed' }));
+    /* A dead engine must never look like a slow one. Every in-flight command
+       is answered immediately, and the link is rebuilt in the background --
+       without this the resolver FIFO is simply abandoned and every caller
+       (including the boot handshake) waits forever. */
+    const drop = (why) => {
+      if (sock !== this.sock) return;             /* superseded connection */
+      /* 'error' and 'close' both fire for one failure; without this guard each
+         failed attempt would schedule two more and the retries would double
+         every round until the process drowned in half-open sockets. */
+      if (this.retrying) return;
+      this.retrying = true;
+      this.up = false;
+      this.fail(why);
+      this._rej(new Error(why));
+      sock.destroy();
+      const t = setTimeout(() => this.open(), 500);
+      if (t.unref) t.unref();
+    };
+    sock.on('error', (e) => drop(e.code || e.message || 'engine error'));
+    sock.on('close', () => drop('engine closed'));
+  }
+
+  fail(why) {
+    this.pending.splice(0).forEach((p) => {
+      clearTimeout(p.timer);
+      p.resolve({ ok: false, error: why });
     });
   }
+
   /* Responses come back strictly in order, so a FIFO of resolvers is all the
      correlation this protocol needs -- no request ids on the wire. */
   send(cmd) {
+    if (!this.up) return Promise.resolve({ ok: false, error: 'engine offline' });
     return new Promise((resolve) => {
-      this.pending.push(resolve);
+      const p = { resolve };
+      /* Backstop for an engine that is connected but wedged. */
+      p.timer = setTimeout(() => {
+        const i = this.pending.indexOf(p);
+        /* The FIFO can no longer be trusted once an entry is skipped, so drop
+           the link and let it rebuild rather than mispairing every reply. */
+        if (i >= 0) { this.pending.splice(i, 1); resolve({ ok: false, error: 'engine timeout' });
+                      try { this.sock.destroy(); } catch {} }
+      }, CMD_TIMEOUT_MS);
+      p.timer.unref?.();
+      this.pending.push(p);
       this.sock.write(cmd + '\n');
     });
   }
@@ -206,7 +259,8 @@ async function loadRoads() {
     let next = 0;
     while (next >= 0) {
       const r = await engine.send(`ROADS ${cls} ${next}`);
-      if (!r.ok) break;
+      /* Bail loudly rather than caching a truncated road network forever. */
+      if (!r || !r.ok) throw new Error(`engine ROADS failed: ${(r && r.error) || 'no reply'}`);
       /* NOT push(...seg): a page holds ~120k numbers and spreading that many
          arguments overflows the call stack. */
       const dst = out[cls], src = r.seg;
@@ -223,6 +277,10 @@ async function loadStatics() {
   const b = await engine.send('BOUNDS');
   const h = await engine.send('HOSPITALS');
   const f = await engine.send('FLEET');
+  /* Surface an unreachable engine as a real failure. Returning half-built
+     statics here is what turned a dead daemon into a blank, silent page. */
+  for (const [what, r] of [['BOUNDS', b], ['HOSPITALS', h], ['FLEET', f]])
+    if (!r || !r.ok) throw new Error(`engine ${what} failed: ${(r && r.error) || 'no reply'}`);
   const idx = Array.from({ length: 1200 }, (_, i) => `NODE ${i * 4}`);
   const nodes = await engine.batch(idx);
   sim.villages = nodes.filter((n) => n.ok).map((n) => ({ node: n.node, x: n.x, y: n.y }));
@@ -438,7 +496,13 @@ server.on('upgrade', (req, sock) => {
       return loadRoads();
     })
     .then((roads) => sock.write(wsFrame(JSON.stringify({ type: 'roads', roads }))))
-    .catch((e) => console.error('static load failed:', e));
+    .catch((e) => {
+      console.error('static load failed:', e);
+      /* Tell the browser, so the boot overlay reports the fault instead of
+         sitting on "starting the dispatch engine..." indefinitely. */
+      try { sock.write(wsFrame(JSON.stringify({ type: 'error',
+        text: 'the dispatch engine is not responding — ' + e.message }))); } catch {}
+    });
 });
 
 engine.ready().then(() => {

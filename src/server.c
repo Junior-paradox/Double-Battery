@@ -26,6 +26,7 @@
 #define _GNU_SOURCE
 #include "htable.h"
 #include <pthread.h>
+#include <signal.h>
 #include <unistd.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -374,6 +375,14 @@ done:
 
 int main(int argc, char **argv) {
     int port = argc > 1 ? atoi(argv[1]) : 9090;
+
+    /* A client that hangs up mid-response leaves us writing into a dead
+     * socket. The default SIGPIPE action is to terminate -- and since every
+     * connection is a thread of ONE process, a single disconnect would take
+     * the whole engine down and leave the bridge hanging forever on a daemon
+     * that no longer exists. Ignoring it makes write() return -1/EPIPE
+     * instead, which conn_thread already handles by closing that one client. */
+    signal(SIGPIPE, SIG_IGN);
 
     uint64_t t0 = now_ns();
     graph_build_grid(&G, GRID_W, GRID_H, 0xC0FFEEull);

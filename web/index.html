@@ -309,6 +309,7 @@ ws.onmessage = (ev) => {
   const m = JSON.parse(ev.data);
   const h = { init: onInit, roads: onRoads, telemetry: onTelemetry,
               dispatch: onDispatch, release: onRelease, failed: onFailed,
+              error: (x) => { logLine(x.text, 'bad'); bootFail(x.text); },
               log: (x) => logLine(x.text, x.level) }[m.type];
   if (h) { try { h(m); } catch (e) { console.error('handler', m.type, e); } }
 };
