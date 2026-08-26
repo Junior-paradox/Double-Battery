@@ -472,3 +472,44 @@ bound by round-trip latency, not the engine — so the bridge pipelines
 rather than issuing one blocking call per emergency.
 
 </details>
+
+# HealthWay — dispatch request sequence
+
+Shows one full emergency lifecycle: browser → bridge → engine → hospital
+table, through to COMMIT and RELEASE.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Browser
+    participant Bridge as Node bridge
+    participant Engine as C engine
+    participant Table as Hospital distance table
+
+    User->>Browser: reports emergency
+    Browser->>Bridge: WebSocket message
+    Bridge->>Engine: DISPATCH node, needs, urgency, sla_ms
+
+    Engine->>Engine: backward Dijkstra finds nearest free ambulance
+    Engine->>Table: O(H) scan for eligible hospital
+
+    loop each hospital in table
+        alt dept + doctor on shift + bed + medicine ok
+            Table-->>Engine: candidate, travel + wait cost
+        else any check fails
+            Table-->>Engine: rejected, reason logged
+        end
+    end
+
+    Engine-->>Bridge: JSON decision + rejected list
+    Bridge-->>Browser: narrated result
+    Browser-->>User: story mode display
+
+    Note over Bridge,Engine: dispatcher confirms
+    Bridge->>Engine: COMMIT amb, hosp, med, qty
+    Engine-->>Bridge: bed reserved, medicine consumed
+
+    Note over Bridge,Engine: ambulance frees up later
+    Bridge->>Engine: RELEASE amb, hosp
+    Engine-->>Bridge: ok, backlog drains
+```
