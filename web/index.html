@@ -7,54 +7,68 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
   :root{
-    --bg:#0b0f14; --panel:#111823; --line:#1f2b3a; --ink:#e6edf5; --dim:#8296ad;
-    --ok:#3fb950; --warn:#d29922; --bad:#f85149; --scene:#2f81f7; --hosp:#e3b341;
+    --bg:#070a0f; --panel:#0f1620; --line:#1e2a38; --ink:#e8eef6; --dim:#7f93aa;
+    --ok:#3fb950; --warn:#d29922; --bad:#f85149; --scene:#3b9dff; --hosp:#f0b429;
   }
   *{box-sizing:border-box}
-  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);overflow:hidden;
     font:13px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-  #map{position:absolute;inset:0;background:#080b10}
-  .leaflet-container{background:#080b10}
-  .panel{position:absolute;z-index:500;background:rgba(17,24,35,.94);
-    border:1px solid var(--line);border-radius:10px;backdrop-filter:blur(8px)}
-  #hud{top:12px;left:12px;width:290px;padding:14px 16px}
-  #log{bottom:12px;left:12px;width:290px;max-height:38vh;padding:10px 12px;overflow:auto}
-  #ctl{top:12px;right:12px;width:250px;padding:14px 16px}
-  h1{margin:0 0 2px;font-size:15px;letter-spacing:.3px}
-  .sub{color:var(--dim);font-size:11px;margin-bottom:12px}
-  h2{margin:14px 0 7px;font-size:10px;text-transform:uppercase;letter-spacing:.9px;
+  #map{position:absolute;inset:0;background:#05070b}
+  .leaflet-container{background:#05070b}
+  .panel{position:absolute;z-index:600;background:rgba(15,22,32,.93);
+    border:1px solid var(--line);border-radius:11px;backdrop-filter:blur(10px);
+    box-shadow:0 8px 32px rgba(0,0,0,.5)}
+  #hud{top:14px;left:14px;width:296px;padding:15px 17px}
+  #log{bottom:14px;left:14px;width:296px;max-height:34vh;padding:9px 13px;overflow:auto}
+  #ctl{top:14px;right:14px;width:252px;padding:15px 17px}
+  h1{margin:0 0 3px;font-size:16px;letter-spacing:.2px}
+  .sub{color:var(--dim);font-size:11px;margin-bottom:13px}
+  h2{margin:15px 0 7px;font-size:10px;text-transform:uppercase;letter-spacing:1px;
     color:var(--dim);font-weight:600}
-  .row{display:flex;justify-content:space-between;align-items:baseline;padding:2px 0}
+  .row{display:flex;justify-content:space-between;align-items:baseline;padding:2.5px 0}
   .row span:first-child{color:var(--dim)}
   .row span:last-child{font-variant-numeric:tabular-nums;font-weight:600}
-  .big{font-size:19px;font-variant-numeric:tabular-nums;font-weight:650}
+  .big{font-size:20px;font-variant-numeric:tabular-nums;font-weight:650}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px}
-  .card{background:#0d141d;border:1px solid var(--line);border-radius:7px;padding:8px 10px}
-  .card .k{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.6px}
-  button{width:100%;margin-top:6px;padding:7px 10px;border-radius:6px;cursor:pointer;
-    background:#182231;color:var(--ink);border:1px solid var(--line);font-size:12px}
-  button:hover{background:#1e2b3d;border-color:#2c3d52}
-  button.primary{background:var(--scene);border-color:var(--scene);color:#fff;font-weight:600}
-  button.danger{background:#2a1416;border-color:#59232a;color:#ff9d96}
-  input[type=range]{width:100%;margin:6px 0 0}
-  .e{padding:5px 0;border-bottom:1px solid #17202c;font-size:11.5px}
+  .card{background:#0b111a;border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+  .card .k{color:var(--dim);font-size:9.5px;text-transform:uppercase;letter-spacing:.6px}
+  button{width:100%;margin-top:6px;padding:8px 10px;border-radius:7px;cursor:pointer;
+    background:#16202e;color:var(--ink);border:1px solid var(--line);font-size:12px;
+    transition:background .12s,border-color .12s}
+  button:hover{background:#1d2a3b;border-color:#31445c}
+  button.primary{background:var(--scene);border-color:var(--scene);color:#04101f;font-weight:700}
+  button.danger{background:#2a1215;border-color:#5b2028;color:#ff9d96}
+  input[type=range]{width:100%;margin:7px 0 0;accent-color:var(--scene)}
+  .e{padding:5px 0;border-bottom:1px solid #16202c;font-size:11.5px}
   .e:last-child{border-bottom:0}
   .e .t{color:var(--dim);font-variant-numeric:tabular-nums}
-  .tag{display:inline-block;padding:0 5px;border-radius:3px;font-size:10px;font-weight:600}
+  .tag{display:inline-block;padding:0 5px;border-radius:3px;font-size:10px;font-weight:700}
   .u3{background:#3d1418;color:#ff8b82}.u2{background:#3a2a10;color:#e3b341}
   .u1,.u0{background:#16232f;color:#8296ad}
-  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px}
-  .legend{position:absolute;bottom:12px;right:12px;z-index:500;padding:9px 12px}
-  .legend div{display:flex;align-items:center;gap:7px;padding:2px 0;color:var(--dim);font-size:11px}
-  .sw{width:14px;height:3px;border-radius:2px}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px}
+  .legend{position:absolute;bottom:14px;right:14px;z-index:600;padding:10px 13px}
+  .legend div{display:flex;align-items:center;gap:8px;padding:2.5px 0;color:var(--dim);font-size:11px}
+  .sw{width:16px;height:3px;border-radius:2px;flex:none}
+  #boot{position:absolute;inset:0;z-index:900;display:flex;align-items:center;
+    justify-content:center;background:#070a0f;color:var(--dim);font-size:13px;
+    transition:opacity .4s}
+  /* map symbols */
+  .hosp{display:flex;align-items:center;justify-content:center;border-radius:5px;
+    background:#f85149;color:#fff;font-weight:800;border:1.5px solid #ff9d96;
+    box-shadow:0 0 0 3px rgba(248,81,73,.18)}
+  .hosp.low{background:#d29922;border-color:#f0c674;box-shadow:0 0 0 3px rgba(210,153,34,.2)}
+  .hosp.full{background:#3d4450;border-color:#5b6472;box-shadow:none}
+  .zoomhint{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);z-index:600;
+    padding:6px 12px;font-size:11px;color:var(--dim)}
 </style>
 </head>
 <body>
 <div id="map"></div>
+<div id="boot">connecting to dispatch engine…</div>
 
 <div id="hud" class="panel">
   <h1>HealthWay</h1>
-  <div class="sub">live emergency dispatch · 50k node network</div>
+  <div class="sub">live emergency dispatch · 50,000 node road network</div>
   <div class="grid2">
     <div class="card"><div class="k">p50 latency</div><div class="big" id="p50">—</div></div>
     <div class="card"><div class="k">p99 latency</div><div class="big" id="p99">—</div></div>
@@ -77,7 +91,7 @@
 <div id="ctl" class="panel">
   <h2 style="margin-top:0">simulation</h2>
   <button id="run" class="primary">start</button>
-  <div style="margin-top:10px;color:var(--dim);font-size:11px">
+  <div style="margin-top:11px;color:var(--dim);font-size:11px">
     emergencies / sec: <b id="rateval" style="color:var(--ink)">3</b></div>
   <input type="range" id="rate" min="0" max="30" value="3">
   <button id="surge">inject surge (60 at once)</button>
@@ -85,76 +99,126 @@
   <button id="close" class="danger">close 2000 roads</button>
   <button id="rebuild">rebuild hospital index</button>
   <button id="reopen">reopen all roads</button>
+  <h2>view</h2>
+  <button id="fit">reset view</button>
 </div>
 
 <div class="panel legend">
-  <div><span class="sw" style="background:#2f81f7"></span> ambulance → incident</div>
-  <div><span class="sw" style="background:#e3b341"></span> incident → hospital</div>
-  <div><span class="dot" style="background:#f85149"></span> hospital</div>
-  <div><span class="dot" style="background:#4a5b70"></span> ambulance (idle)</div>
+  <div><span class="sw" style="background:#3b9dff;height:4px"></span> ambulance → incident</div>
+  <div><span class="sw" style="background:#f0b429;height:4px"></span> incident → hospital</div>
+  <div><span class="sw" style="background:#f85149;border-radius:2px;height:9px;width:9px"></span> hospital</div>
+  <div><span class="dot" style="background:#8fa3ba;margin:0"></span> ambulance idle</div>
+  <div><span class="dot" style="background:#3b9dff;margin:0"></span> ambulance responding</div>
+  <div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--line)">
+    <span class="sw" style="background:#3f5f86;height:3px"></span> highway</div>
+  <div><span class="sw" style="background:#28405c;height:2px"></span> arterial</div>
+  <div><span class="sw" style="background:#16212e;height:1.5px"></span> local street</div>
 </div>
 
-<div id="log" class="panel"></div>
+<div id="zoomhint" class="panel zoomhint">zoom in to reveal local streets</div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-/* The network is synthetic, so there is no real geography to sit under it.
-   CRS.Simple maps engine metres straight to map units -- honest, and it keeps
-   the demo working with no tile server and no network access. */
+/* The network is synthetic, so there is no real geography to sit beneath it.
+   CRS.Simple maps engine metres straight to map units -- honest, and it means
+   no tile server is contacted, so the demo runs with no internet. */
 const S = 100;                                  /* metres per map unit */
 const P = (c) => [c[1] / S, c[0] / S];          /* engine [x,y] -> leaflet [lat,lng] */
 
-const map = L.map('map', { crs: L.CRS.Simple, minZoom: -4, maxZoom: 3,
-                           zoomControl: true, attributionControl: false });
+const map = L.map('map', { crs: L.CRS.Simple, minZoom: -4, maxZoom: 4,
+                           zoomControl: true, attributionControl: false,
+                           preferCanvas: true, zoomSnap: .5 });
+/* Roads go on their own canvas renderer: ~100k segments as a handful of
+   multi-polylines, not 100k DOM nodes. */
+const roadCanvas = L.canvas({ padding: .4 });
+const unitCanvas = L.canvas({ padding: .4 });
+const roadLayers = {};
 const staticLayer = L.layerGroup().addTo(map);
 const routeLayer  = L.layerGroup().addTo(map);
 const unitLayer   = L.layerGroup().addTo(map);
 
 const missions = new Map();
-let fleet = [], fleetDots = new Map(), hospDots = new Map();
+let fleetDots = new Map(), hospMark = new Map(), hospBeds = new Map(), bounds = null;
+const LOCAL_ZOOM = 0.5;                          /* below this, local streets hide */
 
 /* ---------- websocket ---------- */
 const ws = new WebSocket(`ws://${location.host}`);
 const send = (o) => ws.readyState === 1 && ws.send(JSON.stringify(o));
-
 ws.onmessage = (ev) => {
   const m = JSON.parse(ev.data);
-  if (m.type === 'init') return onInit(m);
-  if (m.type === 'telemetry') return onTelemetry(m);
-  if (m.type === 'dispatch') return onDispatch(m);
-  if (m.type === 'release') return onRelease(m);
-  if (m.type === 'failed') return onFailed(m);
-  if (m.type === 'log') return logLine(m.text, m.level);
+  ({ init: onInit, roads: onRoads, telemetry: onTelemetry, dispatch: onDispatch,
+     release: onRelease, failed: onFailed,
+     log: (x) => logLine(x.text, x.level) }[m.type] || (() => {}))(m);
 };
 ws.onclose = () => logLine('bridge disconnected', 'bad');
 
+/* ---------- static map ---------- */
 function onInit(m) {
-  staticLayer.clearLayers();
+  staticLayer.clearLayers(); hospMark.clear(); fleetDots.clear();
   const b = m.bounds;
-  map.fitBounds([P([b.minx, b.miny]), P([b.maxx, b.maxy])]);
+  bounds = [P([b.minx, b.miny]), P([b.maxx, b.maxy])];
+  map.fitBounds(bounds, { padding: [30, 30] });
 
   for (const h of m.hospitals) {
-    const r = 4 + Math.sqrt(h.beds_total);
-    const c = L.circleMarker(P([h.x, h.y]), { radius: r, color: '#f85149', weight: 1.5,
-      fillColor: '#f85149', fillOpacity: .25 }).addTo(staticLayer);
-    c.bindTooltip(`hospital ${h.id} · ${h.beds_total} beds`, { direction: 'top' });
-    hospDots.set(h.id, c);
+    const size = 13 + Math.round(Math.sqrt(h.beds_total));
+    const mk = L.marker(P([h.x, h.y]), {
+      icon: L.divIcon({ className: '', iconSize: [size, size],
+        iconAnchor: [size / 2, size / 2],
+        html: `<div class="hosp" style="width:${size}px;height:${size}px;font-size:${size*.62}px">+</div>` }),
+      zIndexOffset: 400 }).addTo(staticLayer);
+    mk.bindTooltip(`hospital ${h.id} — ${h.beds_free}/${h.beds_total} beds`, { direction: 'top' });
+    hospMark.set(h.id, mk); hospBeds.set(h.id, h.beds_total);
   }
-  fleet = m.fleet;
-  for (const a of fleet) {
-    const d = L.circleMarker(P([a.x, a.y]), { radius: 2.4, color: '#4a5b70',
-      weight: 0, fillColor: '#4a5b70', fillOpacity: .85 }).addTo(staticLayer);
+  for (const a of m.fleet) {
+    const d = L.circleMarker(P([a.x, a.y]), { renderer: unitCanvas, radius: 3.2,
+      color: '#0b1119', weight: 1, fillColor: '#8fa3ba', fillOpacity: 1 }).addTo(staticLayer);
     fleetDots.set(a.id, d);
   }
-  logLine(`network loaded — ${m.hospitals.length} hospitals, ${fleet.length} ambulances`, 'ok');
+  logLine(`network online — ${m.hospitals.length} hospitals, ${m.fleet.length} ambulances`, 'ok');
 }
+
+/* Three multi-polylines, one per road class, drawn to a canvas. */
+function onRoads(m) {
+  const STYLE = {
+    2: { color: '#16212e', weight: 1.0 },     /* local streets  */
+    1: { color: '#28405c', weight: 1.7 },     /* arterials      */
+    0: { color: '#3f5f86', weight: 2.6 },     /* highways       */
+  };
+  let total = 0;
+  for (const cls of [2, 1, 0]) {
+    const flat = m.roads[cls] || [];
+    const segs = [];
+    for (let i = 0; i + 3 < flat.length; i += 4)
+      segs.push([P([flat[i], flat[i + 1]]), P([flat[i + 2], flat[i + 3]])]);
+    total += segs.length;
+    roadLayers[cls] = L.polyline(segs, { ...STYLE[cls], renderer: roadCanvas,
+                                         interactive: false, lineCap: 'butt' });
+    if (cls !== 2 || map.getZoom() >= LOCAL_ZOOM) roadLayers[cls].addTo(map);
+  }
+  roadLayers[2].bringToBack?.();
+  applyZoom();
+  logLine(`road network drawn — ${total.toLocaleString()} segments`, 'ok');
+  const boot = document.getElementById('boot');
+  boot.style.opacity = 0; setTimeout(() => boot.remove(), 450);
+}
+
+/* Local streets are sub-pixel when the whole district is in view, so drawing
+   them there costs frames and shows nothing. Same trick every real map uses. */
+function applyZoom() {
+  const l = roadLayers[2];
+  if (!l) return;
+  const show = map.getZoom() >= LOCAL_ZOOM;
+  if (show && !map.hasLayer(l)) l.addTo(map);
+  if (!show && map.hasLayer(l)) map.removeLayer(l);
+  document.getElementById('zoomhint').style.display = show ? 'none' : 'block';
+}
+map.on('zoomend', applyZoom);
 
 /* ---------- missions ---------- */
 function pathLen(pts) {
   let d = 0; const acc = [0];
   for (let i = 1; i < pts.length; i++) {
-    d += Math.hypot(pts[i][0] - pts[i-1][0], pts[i][1] - pts[i-1][1]);
-    acc.push(d);
+    d += Math.hypot(pts[i][0] - pts[i-1][0], pts[i][1] - pts[i-1][1]); acc.push(d);
   }
   return { total: d || 1, acc };
 }
@@ -171,22 +235,33 @@ function at(pts, meta, f) {
 function onDispatch(m) {
   const l1 = (m.leg1 || []).map(P), l2 = (m.leg2 || []).map(P);
   if (l1.length < 2 && l2.length < 2) return;
-
   const g = L.layerGroup().addTo(routeLayer);
-  if (l1.length > 1) L.polyline(l1, { color: '#2f81f7', weight: 2.2, opacity: .85 }).addTo(g);
-  if (l2.length > 1) L.polyline(l2, { color: '#e3b341', weight: 2.2, opacity: .7, dashArray: '5,4' }).addTo(g);
-  L.circleMarker(m.incident ? P(m.incident) : l1[l1.length-1],
-    { radius: 4.5, color: '#f85149', weight: 2, fillOpacity: .15 }).addTo(g);
-  const unit = L.circleMarker(l1[0] || l2[0],
-    { radius: 4, color: '#fff', weight: 1.5, fillColor: '#2f81f7', fillOpacity: 1 }).addTo(unitLayer);
 
-  const dur = (m.t_scene_ms + m.t_hosp_ms) / 60;   /* time compression 60x */
+  if (l1.length > 1) {
+    L.polyline(l1, { color: '#3b9dff', weight: 5, opacity: .16, interactive: false }).addTo(g);
+    L.polyline(l1, { color: '#3b9dff', weight: 2.4, opacity: .95, interactive: false }).addTo(g);
+  }
+  if (l2.length > 1) {
+    L.polyline(l2, { color: '#f0b429', weight: 2.2, opacity: .8, dashArray: '6,5',
+                     interactive: false }).addTo(g);
+  }
+  const inc = m.incident ? P(m.incident) : l1[l1.length - 1];
+  L.circleMarker(inc, { radius: 7, color: '#f85149', weight: 2, opacity: .9,
+                        fillOpacity: 0, interactive: false }).addTo(g);
+  L.circleMarker(inc, { radius: 2.5, color: '#f85149', weight: 0,
+                        fillColor: '#f85149', fillOpacity: 1, interactive: false }).addTo(g);
+
+  const unit = L.circleMarker(l1[0] || l2[0], { renderer: unitCanvas, radius: 5,
+    color: '#fff', weight: 1.6, fillColor: '#3b9dff', fillOpacity: 1 }).addTo(unitLayer);
+
+  const dur = (m.t_scene_ms + m.t_hosp_ms) / 60;      /* 60x time compression */
   missions.set(m.id, { l1, l2, m1: pathLen(l1), m2: pathLen(l2), unit, g,
     t0: performance.now(), dur: Math.max(500, Math.min(dur, 60000)),
     split: m.t_scene_ms / Math.max(1, m.t_scene_ms + m.t_hosp_ms) });
 
   const dot = fleetDots.get(m.amb);
-  if (dot) dot.setStyle({ fillColor: '#2f81f7', color: '#2f81f7', radius: 3 });
+  if (dot) dot.setStyle({ fillColor: '#3b9dff', radius: 4 });
+  updateHosp(m.hosp, m.beds_free);
 
   logLine(
     `<span class="tag u${m.urgency}">U${m.urgency}</span> ${m.spec} → amb ${m.amb}, ` +
@@ -195,17 +270,25 @@ function onDispatch(m) {
     ` <span class="t">${m.latency_us.toFixed(0)}µs</span>`,
     m.sla_met ? 'ok' : 'warn');
 }
+function updateHosp(id, free) {
+  const mk = hospMark.get(id); if (!mk) return;
+  const total = hospBeds.get(id) || 1;
+  const el = mk.getElement()?.querySelector('.hosp'); if (!el) return;
+  el.classList.toggle('low', free > 0 && free / total < .35);
+  el.classList.toggle('full', free <= 0);
+  mk.setTooltipContent(`hospital ${id} — ${free}/${total} beds`);
+}
 function onRelease(m) {
   const s = missions.get(m.id);
   if (s) { routeLayer.removeLayer(s.g); unitLayer.removeLayer(s.unit); missions.delete(m.id); }
   const dot = fleetDots.get(m.amb);
-  if (dot) dot.setStyle({ fillColor: '#4a5b70', color: '#4a5b70', radius: 2.4 });
+  if (dot) dot.setStyle({ fillColor: '#8fa3ba', radius: 3.2 });
 }
 function onFailed(m) {
   if (m.incident) {
-    const x = L.circleMarker(P(m.incident), { radius: 6, color: '#f85149',
-      weight: 2, fillOpacity: 0 }).addTo(routeLayer);
-    setTimeout(() => routeLayer.removeLayer(x), 4000);
+    const x = L.circleMarker(P(m.incident), { radius: 11, color: '#f85149',
+      weight: 2.5, fillOpacity: 0, dashArray: '3,3' }).addTo(routeLayer);
+    setTimeout(() => routeLayer.removeLayer(x), 4500);
   }
   logLine(`<span class="tag u3">U${m.urgency}</span> ${m.spec} — <b style="color:#f85149">${m.reason}</b>`, 'bad');
 }
@@ -216,10 +299,10 @@ function tick(now) {
     let pos;
     if (f < s.split && s.l1.length > 1) {
       pos = at(s.l1, s.m1, f / Math.max(s.split, 1e-6));
-      s.unit.setStyle({ fillColor: '#2f81f7' });
+      s.unit.setStyle({ fillColor: '#3b9dff' });
     } else if (s.l2.length > 1) {
       pos = at(s.l2, s.m2, (f - s.split) / Math.max(1 - s.split, 1e-6));
-      s.unit.setStyle({ fillColor: '#e3b341' });
+      s.unit.setStyle({ fillColor: '#f0b429' });
     }
     if (pos) s.unit.setLatLng(pos);
   }
@@ -236,7 +319,7 @@ function onTelemetry(m) {
   $('served').textContent = (e.served || 0).toLocaleString();
   $('settled').textContent = m.meanSettled ? m.meanSettled.toFixed(0) : '—';
   $('idx').textContent = m.dispatched ? m.indexPct.toFixed(0) + '%' : '—';
-  $('closed').textContent = m.closedRoads.toLocaleString();
+  $('closed').textContent = (m.closedRoads || 0).toLocaleString();
   $('busy').textContent = `${e.busy || 0} / ${e.ambulances || 0}`;
   $('beds').textContent = (e.beds_free || 0).toLocaleString();
   $('active').textContent = m.active;
@@ -246,13 +329,11 @@ function onTelemetry(m) {
   $('sla').innerHTML = `<span style="color:${sla > 90 ? '#3fb950' : sla > 70 ? '#d29922' : '#f85149'}">`
     + sla.toFixed(1) + '%</span>';
 }
-
-let n = 0;
 function logLine(html, level) {
   const box = $('log');
   const d = document.createElement('div');
   d.className = 'e';
-  const c = { ok: '#3fb950', warn: '#d29922', bad: '#f85149' }[level] || '#8296ad';
+  const c = { ok: '#3fb950', warn: '#d29922', bad: '#f85149' }[level] || '#7f93aa';
   d.innerHTML = `<span class="dot" style="background:${c}"></span>${html}`;
   box.prepend(d);
   while (box.children.length > 60) box.lastChild.remove();
@@ -274,6 +355,7 @@ $('surge').onclick   = () => send({ type: 'surge', value: 60 });
 $('close').onclick   = () => send({ type: 'close', value: 2000 });
 $('reopen').onclick  = () => send({ type: 'reopen' });
 $('rebuild').onclick = () => send({ type: 'rebuild' });
+$('fit').onclick     = () => bounds && map.fitBounds(bounds, { padding: [30, 30] });
 </script>
 </body>
 </html>

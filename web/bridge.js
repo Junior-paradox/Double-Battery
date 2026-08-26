@@ -119,13 +119,63 @@ function broadcast(obj) {
 }
 
 /* ---------------- simulation state ---------------- */
-const SPEC_NAMES = ['trauma', 'cardiac', 'neuro', 'burns', 'obstetric', 'paeds', 'toxicology', 'icu'];
+/* Capability bits, mirroring the enum in src/dispatch.h. */
+const H = { TRAUMA:1, CARDIAC:2, NEURO:4, BURNS:8, OBSTETRIC:16, PAEDS:32, TOXICOL:64, ICU:128 };
+const A = { ALS:256, VENT:512, NEONATAL:1024 };
+
+/* Presenting complaint -> required destination capability and vehicle kit.
+ * This is what makes the specialty routing mean something: a delivery will
+ * not be taken to a hospital without obstetrics, and a neonatal-equipped
+ * vehicle is required to carry it, no matter how close a plain van is. */
+const CASES = [
+  { name: 'road accident',      hosp: H.TRAUMA,             amb: A.ALS | A.VENT, u: 3, w: 18 },
+  { name: 'cardiac arrest',     hosp: H.CARDIAC,            amb: A.ALS | A.VENT, u: 3, w: 14 },
+  { name: 'stroke',             hosp: H.NEURO,              amb: A.ALS,          u: 3, w: 10 },
+  { name: 'labour / delivery',  hosp: H.OBSTETRIC,          amb: A.NEONATAL,     u: 2, w: 12 },
+  { name: 'severe burns',       hosp: H.BURNS,              amb: A.ALS,          u: 3, w: 5  },
+  { name: 'poisoning',          hosp: H.TOXICOL,            amb: A.ALS,          u: 2, w: 7  },
+  { name: 'paediatric emergency', hosp: H.PAEDS,            amb: 0,              u: 1, w: 12 },
+  { name: 'eye injury',         hosp: H.TRAUMA,             amb: 0,              u: 1, w: 8  },
+  { name: 'chest pain',         hosp: H.CARDIAC,            amb: A.ALS,          u: 2, w: 10 },
+  /* Two required specialties at once: the index cannot answer these, so they
+     exercise the live-search fallback path. */
+  { name: 'critical transfer',  hosp: H.ICU | H.CARDIAC,    amb: A.ALS | A.VENT, u: 3, w: 4  },
+];
+const CASE_TOTAL = CASES.reduce((a, c) => a + c.w, 0);
+function pickCase() {
+  let r = Math.random() * CASE_TOTAL;
+  for (const c of CASES) { r -= c.w; if (r <= 0) return c; }
+  return CASES[0];
+}
 const sim = {
   running: false, rate: 3, timeScale: 60, nextId: 1,
   villages: [], missions: new Map(),
   dispatched: 0, failed: 0, slaMet: 0, indexed: 0,
   lat: [], settled: [], closedEdges: [],
 };
+
+/* The road network is static, so it is pulled from the engine once and reused
+   for every browser that connects. ~100k segments, paginated by node cursor. */
+let roadsCache = null;
+async function loadRoads() {
+  if (roadsCache) return roadsCache;
+  const out = { 0: [], 1: [], 2: [] };
+  for (const cls of [0, 1, 2]) {
+    let next = 0;
+    while (next >= 0) {
+      const r = await engine.send(`ROADS ${cls} ${next}`);
+      if (!r.ok) break;
+      /* NOT push(...seg): a page holds ~120k numbers and spreading that many
+         arguments overflows the call stack. */
+      const dst = out[cls], src = r.seg;
+      for (let i = 0; i < src.length; i++) dst.push(src[i]);
+      next = r.next;
+    }
+  }
+  roadsCache = out;
+  console.log(`roads cached: ${out[0].length / 4} highway, ${out[1].length / 4} arterial, ${out[2].length / 4} local`);
+  return out;
+}
 
 async function loadStatics() {
   const b = await engine.send('BOUNDS');
@@ -146,16 +196,16 @@ function pct(arr, q) {
 async function spawnEmergency() {
   const v = sim.villages[(Math.random() * sim.villages.length) | 0];
   if (!v) return;
-  const spec = (Math.random() * 8) | 0;
-  const urgency = Math.random() < 0.35 ? 3 : (Math.random() * 3) | 0;
+  const kase = pickCase();
+  const urgency = kase.u;
   const sla = urgency === 3 ? 8 * 60000 : 20 * 60000;
-  const need = 1 << spec;
-  const r = await engine.send(`DISPATCH ${v.node} ${need} 0 ${urgency} ${sla} 900000 1`);
+  const r = await engine.send(
+    `DISPATCH ${v.node} ${kase.hosp} ${kase.amb} ${urgency} ${sla} 900000 1`);
 
   if (!r.ok) {
     sim.failed++;
     broadcast({ type: 'failed', reason: r.reason || r.error, incident: [v.x, v.y],
-                spec: SPEC_NAMES[spec], urgency });
+                spec: kase.name, urgency });
     return;
   }
   sim.dispatched++;
@@ -172,7 +222,7 @@ async function spawnEmergency() {
     type: 'dispatch', id, amb: r.amb, hosp: r.hosp,
     incident: [v.x, v.y], leg1: r.leg1 || [], leg2: r.leg2 || [],
     t_scene_ms: r.t_scene_ms, t_hosp_ms: r.t_hosp_ms,
-    sla_met: r.sla_met, urgency, spec: SPEC_NAMES[spec],
+    sla_met: r.sla_met, urgency, spec: kase.name,
     latency_us: r.latency_us, settled: r.settled, indexed: r.indexed,
     beds_free: r.beds_free,
   });
@@ -272,7 +322,13 @@ server.on('upgrade', (req, sock) => {
   sock.on('close', () => clients.delete(sock));
   sock.on('error', () => clients.delete(sock));
 
-  loadStatics().then((s) => sock.write(wsFrame(JSON.stringify({ type: 'init', ...s }))));
+  loadStatics()
+    .then((s) => {
+      sock.write(wsFrame(JSON.stringify({ type: 'init', ...s })));
+      return loadRoads();
+    })
+    .then((roads) => sock.write(wsFrame(JSON.stringify({ type: 'roads', roads }))))
+    .catch((e) => console.error('static load failed:', e));
 });
 
 engine.ready().then(() => {

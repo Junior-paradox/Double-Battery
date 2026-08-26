@@ -30,6 +30,7 @@ typedef struct {
     uint32_t *fwd_to_rev;     /* n_edges: forward edge id -> reverse edge id */
     uint32_t *base_w;         /* n_edges: pristine weights (undo closures) */
     uint32_t *twin;           /* n_edges: opposite direction of the same road */
+    uint8_t  *edge_class;     /* n_edges: 0 highway, 1 arterial, 2 local */
 
     float *x, *y;             /* node coords, metres */
     uint32_t max_speed_mms;   /* fastest road, mm per ms -> used for A* bound */

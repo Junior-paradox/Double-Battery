@@ -49,6 +49,7 @@ void graph_build_grid(Graph *g, uint32_t gw, uint32_t gh, uint64_t seed) {
     uint32_t *ea = xmalloc(sizeof(uint32_t) * U);
     uint32_t *eb = xmalloc(sizeof(uint32_t) * U);
     uint32_t *ew = xmalloc(sizeof(uint32_t) * U);
+    uint8_t  *ec = xmalloc(sizeof(uint8_t) * U);
     uint32_t m = 0;
 
     for (uint32_t j = 0; j < gh; j++)
@@ -58,13 +59,13 @@ void graph_build_grid(Graph *g, uint32_t gw, uint32_t gh, uint64_t seed) {
                 uint32_t nb = id_of[j * gw + i + 1];
                 /* every 12th column is an arterial, every 40th a highway */
                 uint32_t cls = (j % 40 == 0) ? 0 : (j % 12 == 0) ? 1 : 2;
-                ea[m] = id; eb[m] = nb;
+                ea[m] = id; eb[m] = nb; ec[m] = (uint8_t)cls;
                 ew[m] = edge_time_ms(euclid(g, id, nb), ROAD_SPEED[cls]); m++;
             }
             if (j + 1 < gh) {
                 uint32_t nb = id_of[(j + 1) * gw + i];
                 uint32_t cls = (i % 40 == 0) ? 0 : (i % 12 == 0) ? 1 : 2;
-                ea[m] = id; eb[m] = nb;
+                ea[m] = id; eb[m] = nb; ec[m] = (uint8_t)cls;
                 ew[m] = edge_time_ms(euclid(g, id, nb), ROAD_SPEED[cls]); m++;
             }
         }
@@ -73,7 +74,7 @@ void graph_build_grid(Graph *g, uint32_t gw, uint32_t gh, uint64_t seed) {
     for (uint32_t k = 0; k < n_bypass; k++) {
         uint32_t a = rng_u32(&rng, V), b = rng_u32(&rng, V);
         if (a == b) b = (b + 1) % V;
-        ea[m] = a; eb[m] = b;
+        ea[m] = a; eb[m] = b; ec[m] = 0;
         ew[m] = edge_time_ms(euclid(g, a, b), ROAD_SPEED[0]); m++;
     }
 
@@ -94,6 +95,7 @@ void graph_build_grid(Graph *g, uint32_t gw, uint32_t gh, uint64_t seed) {
     g->fwd_to_rev = xmalloc(sizeof(uint32_t) * E);
     g->base_w  = xmalloc(sizeof(uint32_t) * E);
     g->twin    = xmalloc(sizeof(uint32_t) * E);
+    g->edge_class = xmalloc(sizeof(uint8_t) * E);
 
     uint32_t *ocur = xmalloc(sizeof(uint32_t) * V);
     uint32_t *icur = xmalloc(sizeof(uint32_t) * V);
@@ -109,6 +111,7 @@ void graph_build_grid(Graph *g, uint32_t gw, uint32_t gh, uint64_t seed) {
         g->out_e[f2] = (Edge){ ea[k], ew[k] }; g->base_w[f2] = ew[k];
         fslot[2 * k] = f1; fslot[2 * k + 1] = f2;
         g->twin[f1] = f2; g->twin[f2] = f1;
+        g->edge_class[f1] = g->edge_class[f2] = ec[k];
     }
     /* pass 2: reverse graph + fwd->rev index map (O(1) closure propagation) */
     for (uint32_t k = 0; k < U; k++) {
@@ -120,13 +123,13 @@ void graph_build_grid(Graph *g, uint32_t gw, uint32_t gh, uint64_t seed) {
         g->fwd_to_rev[fslot[2 * k + 1]] = r2;
     }
 
-    free(ea); free(eb); free(ew); free(ocur); free(icur); free(fslot); free(id_of);
+    free(ea); free(eb); free(ew); free(ocur); free(icur); free(fslot); free(id_of); free(ec);
 }
 
 void graph_free(Graph *g) {
     free(g->out_head); free(g->out_e);
     free(g->in_head); free(g->in_e);
-    free(g->fwd_to_rev); free(g->base_w); free(g->twin); free(g->x); free(g->y);
+    free(g->fwd_to_rev); free(g->base_w); free(g->twin); free(g->edge_class); free(g->x); free(g->y);
     memset(g, 0, sizeof(*g));
 }
 
@@ -135,6 +138,7 @@ size_t graph_bytes(const Graph *g) {
     return (V + 1) * 4 * 2          /* out_head + in_head */
          + E * 8 * 2                /* out_e + in_e (interleaved to,w) */
          + E * 4 * 3                /* fwd_to_rev + base_w + twin */
+         + E                        /* edge_class */
          + V * 8;                   /* x, y */
 }
 

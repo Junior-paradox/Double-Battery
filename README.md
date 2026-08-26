@@ -230,6 +230,16 @@ The map is Leaflet on `L.CRS.Simple`, mapping engine metres straight to map
 units. The network is synthetic, so there is no real geography to put beneath
 it and no tile server is contacted — the demo works with no internet.
 
+The full road network is drawn: **100,050 segments** (3,138 highway, 7,317
+arterial, 89,595 local), served by the paginated `ROADS` command and rendered
+as three multi-polylines on a canvas renderer rather than 100k DOM nodes.
+Local streets are sub-pixel when the whole district is in view, so they are
+only drawn past a zoom threshold — the same trick every real map uses, and it
+keeps panning smooth at the default view.
+
+Hospitals are bed-scaled markers that turn amber below 35% capacity and grey
+when full; ambulances are dots that light up blue while responding.
+
 Controls: run/pause, emergencies per second, inject a 60-case surge, close
 2000 roads, rebuild the index, reopen. The live panel shows p50/p99 engine
 latency, nodes settled per query, index hit rate, fleet utilisation, beds
@@ -238,6 +248,32 @@ remaining, SLA attainment, and a scrolling decision log.
 Verified end to end: 60 hospitals and 200 ambulances loaded, dispatches
 returning route geometry at 96 µs with 87 nodes settled, 2000 roads closed in
 116 ms over the wire, index rebuilt in 135 ms, telemetry at 2 Hz.
+
+## Clinical routing
+
+Dispatch is driven by presenting complaint, not by distance alone. Each case
+type names a required destination capability and vehicle kit:
+
+| complaint | destination must have | vehicle must have |
+|---|---|---|
+| road accident | trauma | ALS + ventilator |
+| cardiac arrest | cardiac | ALS + ventilator |
+| stroke | neuro | ALS |
+| labour / delivery | obstetrics | neonatal |
+| severe burns | burns | ALS |
+| poisoning | toxicology | ALS |
+| paediatric emergency | paediatrics | — |
+| critical transfer | ICU **and** cardiac | ALS + ventilator |
+
+The search accepts a hospital only where `(spec_mask & need) == need`, so a
+delivery is never routed to a hospital without obstetrics however close it is
+— the frontier keeps expanding until a qualifying one is found. The same test
+gates the vehicle, so a neonatal case will not take a plain van that happens
+to be nearer.
+
+`critical transfer` deliberately requires two specialties at once, which the
+single-specialty index cannot answer — those requests fall through to the live
+search, exercising that path in every demo run.
 
 ## Honest gaps
 
@@ -267,3 +303,9 @@ returning route geometry at 96 µs with 87 nodes settled, 2000 roads closed in
   A bulk `CLOSE a,b,c` command would remove it.
 - Ambulances return to their home node on release rather than continuing from
   where they finished.
+- Ophthalmology, ENT and orthopaedics are not modelled as separate
+  specialties; an eye injury routes to a trauma centre. Adding them is a bit
+  in the mask and a row in the case table, not a design change.
+- The browser builds ~90k local-street segments up front even though they are
+  hidden at the default zoom. On a slow machine that is a one-off pause at
+  load; decimating them by zoom level at the source would remove it.

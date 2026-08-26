@@ -17,6 +17,7 @@
  *   REBUILD                      refresh the hospital index after closures
  *   NODE <index>                 resolve a village index to a node id
  *   HOSPITALS | FLEET | BOUNDS   static map data for the client
+ *   ROADS <class> <from_node>    road geometry, paginated by node cursor
  *   STATS | QUIT
  */
 #define _GNU_SOURCE
@@ -179,6 +180,27 @@ static int handle(Ctx *c, char *line) {
         uint32_t nd = W.village[i];
         return snprintf(c->out, OUT_CAP,
             "{\"ok\":true,\"node\":%u,\"x\":%.1f,\"y\":%.1f}\n", nd, G.x[nd], G.y[nd]);
+    }
+    if (!strncmp(line, "ROADS", 5)) {
+        uint32_t cls = tok(&arg), start = tok(&arg);
+        /* Each undirected road is emitted once, by the endpoint with the
+         * lower id. Paginated by node cursor because the full network is far
+         * larger than one response buffer. */
+        int n = snprintf(c->out, OUT_CAP, "{\"ok\":true,\"class\":%u,\"seg\":[", cls);
+        uint32_t u = start, first = 1;
+        for (; u < G.n_nodes; u++) {
+            if (n > OUT_CAP - 4096) break;
+            for (uint32_t e = G.out_head[u]; e < G.out_head[u + 1]; e++) {
+                uint32_t v = G.out_e[e].to;
+                if (v <= u || G.edge_class[e] != cls) continue;
+                n += snprintf(c->out + n, (size_t)(OUT_CAP - n),
+                              "%s%.0f,%.0f,%.0f,%.0f", first ? "" : ",",
+                              G.x[u], G.y[u], G.x[v], G.y[v]);
+                first = 0;
+            }
+        }
+        return n + snprintf(c->out + n, (size_t)(OUT_CAP - n),
+                            "],\"next\":%d}\n", u >= G.n_nodes ? -1 : (int)u);
     }
     if (!strncmp(line, "HOSPITALS", 9)) {
         pthread_rwlock_rdlock(&LOCK);
