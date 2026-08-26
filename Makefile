@@ -32,9 +32,16 @@ tests: $(COBJ) src/test.o
 
 -include $(CORE:.c=.d) src/bench.d src/server.d src/test.d
 
-# Exits non-zero if any assertion fails. Runs in a few seconds.
+# Exits non-zero if any assertion fails. Runs in about a second.
 test: tests
 	./tests
+
+# Same contract, but over the socket: starts the daemon on a scratch port and
+# drives it with bash's own /dev/tcp. No extra dependencies.
+test-protocol: server
+	./scripts/protocol_test.sh
+
+test-all: test test-protocol
 
 run: bench
 	./bench
@@ -48,4 +55,4 @@ serve: server
 clean:
 	rm -f src/*.o src/*.d bench server tests
 
-.PHONY: all test run quick serve clean
+.PHONY: all test test-protocol test-all run quick serve clean

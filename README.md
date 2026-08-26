@@ -5,11 +5,19 @@ from scratch in C, with a live web simulation on top.
 
 ```
 make              # portable build — bench, server and tests
-make test         # 34 assertions, exits non-zero on failure, under a second
+make test         # 74 assertions, exits non-zero on failure, under a second
+make test-all     # the above plus 31 protocol assertions against the daemon
 ./bench --quick   # benchmark in ~40 s   (plain ./bench for the full sweep)
 ./server 9090     # engine daemon
 node web/bridge.js
 ```
+
+**Full documentation:**
+
+| Document | What's in it |
+|---|---|
+| **[docs/ALGORITHM.md](docs/ALGORITHM.md)** | The approach: problem model, objective function, the decomposition and why it is exact, pseudocode for each search, correctness proofs, complexity, the three hospital-side designs and why two were rejected, alternatives considered, known limitations |
+| **[docs/TESTING.md](docs/TESTING.md)** | The test plan: 105 named test cases with IDs, six testing techniques and what each catches, mutation-testing evidence that the suite can actually fail, a requirement→test traceability matrix, and known gaps |
 
 The build is **portable by default**. `-march=native` is opt-in via
 `make NATIVE=1`, because a binary built with it targets the build machine's
@@ -41,6 +49,10 @@ subject to four independent capacity constraints, and has to do it in
 microseconds while roads close and the fleet saturates around it.
 
 ## Algorithmic design
+
+> Summarised here. The full treatment — correctness proofs, pseudocode,
+> complexity derivations, rejected alternatives and known limitations — is in
+> **[docs/ALGORITHM.md](docs/ALGORITHM.md)**.
 
 ### The decomposition
 
@@ -334,45 +346,82 @@ story mode, and incidents get a floating label on the map as they appear.
 
 ## Tests
 
-`make test` builds and runs `src/test.c`, which **asserts** rather than
-prints: every check is named, a failure reports what was expected against what
-happened, and the process exits non-zero. It runs on an 8,000-node network so
-it finishes in under a second.
+Two suites, 105 assertions, both exiting non-zero on failure. Full test plan
+with per-case IDs, techniques and traceability: **[docs/TESTING.md](docs/TESTING.md)**.
 
 ```
-1. shortest-path correctness — four independent implementations agree
-2. queue wait genuinely changes the destination
-3. resource exhaustion — each constraint rejects on its own
-4. road closures
-5. doctor shifts change routing over the day
-6. urgency preemption in the backlog
-7. resource accounting is conserved
-8. the response horizon bounds the ambulance search only
+make test          src/test.c               74 checks — the engine, in-process
+make test-protocol scripts/protocol_test.sh  31 checks — the daemon, over TCP
+make test-all      both                     105 checks, 0 failed, under 4 s
+```
 
-34 checks, 0 failed
+Every check is **named**, and a failure reports what was expected against what
+happened. The engine suite runs on an 8,000-node network so it finishes in
+under a second; the benchmark cross-checks the same properties at full scale.
+
+**The engine suite** (`make test`), 16 groups:
+
+```
+ 1. shortest-path correctness — four independent implementations agree
+ 2. queue wait genuinely changes the destination
+ 3. resource exhaustion — each constraint rejects on its own
+ 4. road closures
+ 5. doctor shifts change routing over the day
+ 6. urgency preemption in the backlog
+ 7. resource accounting is conserved
+ 8. the response horizon bounds the ambulance search only
+ 9. graph invariants — the CSR really is the network it claims to be
+10. engine search vs an independent Bellman-Ford reference
+11. the A* heuristic is admissible — it can never overestimate
+12. reconstructed routes are real drivable roads, not just numbers
+13. distance table lifecycle — build, stale, rebuild
+14. backlog queue invariants under stress
+15. determinism — the same input always produces the same decision
+16. boundary and degenerate inputs
+
+74 checks, 0 failed
 ```
 
 What it actually pins down:
 
 - the distance table agrees with the bounded search, an exhaustive full
-  Dijkstra, and a per-candidate A\* — four independent implementations;
+  Dijkstra, and a per-candidate A\* — and separately with a **Bellman-Ford
+  reference that shares no code with any of them**, so a bug in the common
+  heap or in the generation-stamp reset cannot hide;
 - **swamping the chosen hospital's queue diverts the patient to one that is
   genuinely further away by road**, and the new choice still matches
   exhaustive search — this is the property a travel-time index cannot express;
 - each constraint refuses on its own: no department, no doctor on shift, no
   bed, no medicine, no free vehicle — and restocking a single hospital revives
   routing to exactly that hospital;
+- the A\* heuristic never overestimates, over thousands of sampled nodes —
+  which is the precondition for A\* returning the optimum at all;
+- reconstructed routes are **checked edge by edge against the road network**,
+  and re-summing the segments reproduces the reported drive time exactly;
 - a node cut off by closures reaches zero hospitals, and **reopening the roads
-  restores the byte-identical decision**;
+  restores the byte-identical decision and the byte-identical distance table**;
 - some cases route differently at 03:00 than at 10:00;
 - a critical case preempts everything already queued, equal urgency is served
-  oldest-first, and 4,000 mixed requests drain in strict priority order;
+  oldest-first, and randomised interleavings of arrivals and dispatches always
+  yield the true most-urgent case;
 - one commit takes exactly one bed, one vehicle and one queue slot, and
-  medicine does **not** come back on release — only a restock refills it.
+  medicine does **not** come back on release — only a restock refills it;
+- a horizon exactly equal to the drive time accepts the vehicle and one
+  millisecond tighter refuses it.
 
-The suite is verified to fail: removing the medicine check from
-`hosp_reject_reason` makes it report
-`FAIL  medicine batch depleted everywhere -> request refused` and exit 1.
+**The daemon suite** (`make test-protocol`) drives the engine the way the web
+bridge does — over a TCP socket, using bash's own `/dev/tcp`, no extra
+dependencies. It covers reply framing and ordering under pipelining, route
+geometry, state changes through `COMMIT`/`RELEASE`/`CLOCK`/`RESTOCK`, closure
+staleness flags, 200 pipelined dispatches, and **negative cases**: an
+out-of-range node, an unknown verb, a bad edge id, a bad ambulance id and an
+empty line are each rejected by name, and the connection survives all of them.
+
+**The suite is verified to fail.** Six single-line mutations were injected into
+the engine and each was caught by the right assertions — including reverting
+the hospital search to the naive "stop at the first eligible hospital", which
+immediately breaks two checks. The full mutation table is in
+[docs/TESTING.md](docs/TESTING.md#6-mutation-testing-proof-the-suite-can-fail).
 
 ## Deploying
 
