@@ -280,35 +280,50 @@ issuing one blocking call per emergency.
 are written directly against `node:crypto`. It holds a pool of 4 pipelined TCP
 connections to the engine.
 
-**01 — Interactive map.** Leaflet on `L.CRS.Simple`, mapping engine metres
-straight to map units. The full road network is drawn: **100,050 segments**
-(3,138 highway, 7,317 arterial, 89,595 local) as three multi-polylines on a
-canvas renderer, not 100k DOM nodes. Local streets are sub-pixel when the whole
-district is in view, so they only draw past a zoom threshold. No tile server is
-contacted; the demo runs with no internet. Ambulances animate along the real
-returned polylines — blue to the scene, amber to the hospital.
+One page, two modes, one socket. A toggle switches between them with no
+navigation and no reload.
 
-**02 — Live telemetry.** p50/p99 engine latency, nodes settled per query,
-hospitals evaluated, fleet utilisation, bed meter, **medicine meter**, doctors
-on duty, simulated clock, queue depth, backlog size, requests served after
-waiting, SLA attainment. Hospital markers turn amber below 35% beds and grey
-when full.
+### Story mode — one emergency at a time
 
-**03 — Decision log.** A cost-transparency panel rendering the engine's own
-breadcrumbs — every closer hospital that was passed over and why:
+The default. A case is narrated in plain English as it happens, paced for a
+human rather than for a stress test: the call comes in, the engine searches,
+an ambulance is assigned, a hospital is chosen, and then **each closer
+hospital it rejected is named with the reason**. The map flies to the case and
+labels the chosen hospital and the ruled-out ones in place, so the viewer never
+has to look away from the map to follow the story.
 
 ```
-   8.6 min  hospital  7   ✕ no specialist on duty
-  11.3 min  hospital 48   ✕ no specialist on duty
-  13.3 min  hospital 19   ✕ no specialist on duty
-  19.6 min  hospital 49   ✓ chosen
-  response 11.5 + transport 19.6 + queue 0.0 = 31.2 min
-  60 hospitals evaluated in 670 µs
+🚨  Road accident reported in District 12
+🔎  Checking every ambulance and hospital…  60 hospitals reachable
+🚑  Ambulance 171 is on the way — 9.5 km away, reaches the patient in 13 min
+🏥  Taking them to Oakwood Hospital — specialist on shift, bed free, medicine in stock
+❌  Not Sunrise Regional Hospital — only 9.6 min away, but no specialist on duty
+❌  Not Highland Regional Hospital — only 12.6 min away, but no specialist on duty
+    total time to treatment 26 min · decided in 1,129 µs
 ```
 
-Controls: run/pause, emergencies per second, 60-case surge, close 2,000 roads,
-rebuild the table, reopen, restock all medicine, jump to night shift (03:00) or
-day shift (10:00).
+Pacing is driven by the client: it asks the engine for exactly one case
+(`oneshot`), plays the story, then asks for the next. Nothing is dropped and
+nothing overlaps.
+
+### Live city view — the whole network under load
+
+The operational dashboard. Full road network, every ambulance and hospital,
+all the meters, and the controls that break things: surge injection, 2,000
+road closures, medicine restock, and a jump between day and night shift so the
+staffing map visibly changes.
+
+The full road network is drawn — **100,050 segments** (3,138 highway, 7,317
+arterial, 89,595 local) as three multi-polylines on a canvas renderer, not
+100k DOM nodes. Local streets only draw past a zoom threshold, since they are
+sub-pixel when the whole district is in view. No tile server is contacted; the
+demo runs with no internet.
+
+Telemetry covers decision time, fleet utilisation, bed and medicine meters,
+doctors on shift, the simulated clock, queue depth, backlog size, and requests
+served after waiting. Hospital markers turn amber below 35% beds and grey when
+full. A **why this hospital** panel carries the same rejection breadcrumbs as
+story mode, and incidents get a floating label on the map as they appear.
 
 ## Edge cases
 

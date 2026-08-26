@@ -188,7 +188,7 @@ class Backlog {
 }
 
 const sim = {
-  running: false, rate: 3, timeScale: 60, nextId: 1,
+  running: false, rate: 0.5, acc: 0, timeScale: 60, nextId: 1,
   villages: [], missions: new Map(),
   dispatched: 0, failed: 0, slaMet: 0, requeued: 0, abandoned: 0,
   lat: [], settled: [], closedEdges: [],
@@ -320,9 +320,12 @@ async function drainBacklog() {
   } finally { draining = false; }
 }
 
+/* Accumulator, not a loop counter, so rates below one per second work --
+   a human watching one case at a time needs ~0.5/s, not 3/s. */
 setInterval(() => {
   if (!sim.running) return;
-  for (let i = 0; i < sim.rate; i++) spawnEmergency();
+  sim.acc += sim.rate;
+  while (sim.acc >= 1) { sim.acc -= 1; spawnEmergency(); }
 }, 1000);
 
 /* Advance the simulated clock so doctor shifts actually turn over during a
@@ -357,7 +360,8 @@ setInterval(async () => {
 async function onCommand(msg) {
   const m = JSON.parse(msg);
   if (m.type === 'run') sim.running = !!m.value;
-  else if (m.type === 'rate') sim.rate = Math.max(0, Math.min(50, m.value | 0));
+  else if (m.type === 'rate') sim.rate = Math.max(0, Math.min(50, +m.value || 0));
+  else if (m.type === 'oneshot') { await spawnEmergency(); }
   else if (m.type === 'surge') {
     const n = Math.max(1, Math.min(200, m.value | 0));
     for (let i = 0; i < n; i++) spawnEmergency();

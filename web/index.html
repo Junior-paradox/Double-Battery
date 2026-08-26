@@ -3,253 +3,367 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>HealthWay — live dispatch</title>
+<title>HealthWay — emergency dispatch</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
   :root{
-    --bg:#070a0f; --panel:#0f1620; --line:#1e2a38; --ink:#e8eef6; --dim:#7f93aa;
+    --bg:#070a0f; --panel:#0f1620; --line:#1e2a38; --ink:#e8eef6; --dim:#8296ad;
     --ok:#3fb950; --warn:#d29922; --bad:#f85149; --scene:#3b9dff; --hosp:#f0b429;
+    --strip:64px;
   }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);overflow:hidden;
-    font:13px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-  #map{position:absolute;inset:0;background:#05070b}
+    font:13px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  #map{position:absolute;left:0;right:0;top:var(--strip);bottom:0;background:#05070b}
   .leaflet-container{background:#05070b}
-  .panel{position:absolute;z-index:600;background:rgba(15,22,32,.93);
-    border:1px solid var(--line);border-radius:11px;backdrop-filter:blur(10px);
-    box-shadow:0 8px 32px rgba(0,0,0,.5)}
-  #hud{top:14px;left:14px;width:296px;padding:15px 17px}
-  #log{bottom:14px;left:14px;width:296px;max-height:34vh;padding:9px 13px;overflow:auto}
-  #ctl{top:14px;right:14px;width:252px;padding:15px 17px}
-  h1{margin:0 0 3px;font-size:16px;letter-spacing:.2px}
-  .sub{color:var(--dim);font-size:11px;margin-bottom:13px}
+  .panel{background:rgba(15,22,32,.94);border:1px solid var(--line);border-radius:12px;
+    backdrop-filter:blur(10px);box-shadow:0 10px 40px rgba(0,0,0,.55)}
+
+  /* ---------- top strip: what this thing does, in 5 seconds ---------- */
+  #strip{position:absolute;top:0;left:0;right:0;height:var(--strip);z-index:800;
+    display:flex;align-items:center;gap:0;padding:0 16px;
+    background:#0b111a;border-bottom:1px solid var(--line)}
+  #brand{font-size:16px;font-weight:700;letter-spacing:.2px;margin-right:6px;white-space:nowrap}
+  #brand small{display:block;font-size:10px;color:var(--dim);font-weight:400;letter-spacing:.2px}
+  .steps{display:flex;align-items:center;gap:2px;flex:1;overflow:hidden;margin:0 14px}
+  .step{display:flex;align-items:center;gap:7px;padding:5px 9px;white-space:nowrap;
+    color:var(--dim);font-size:11.5px}
+  .step b{color:var(--ink);font-weight:600}
+  .step .ic{font-size:15px}
+  .arr{color:#2b3b4f;font-size:13px}
+  .modes{display:flex;gap:0;border:1px solid var(--line);border-radius:8px;overflow:hidden;flex:none}
+  .modes button{padding:7px 13px;border:0;background:#131c28;color:var(--dim);
+    font-size:12px;cursor:pointer;font-weight:600}
+  .modes button.on{background:var(--scene);color:#04101f}
+
+  /* ---------- shared ---------- */
   h2{margin:15px 0 7px;font-size:10px;text-transform:uppercase;letter-spacing:1px;
     color:var(--dim);font-weight:600}
   .row{display:flex;justify-content:space-between;align-items:baseline;padding:2.5px 0}
   .row span:first-child{color:var(--dim)}
   .row span:last-child{font-variant-numeric:tabular-nums;font-weight:600}
-  .big{font-size:20px;font-variant-numeric:tabular-nums;font-weight:650}
+  .meter{height:4px;background:#0b111a;border-radius:3px;overflow:hidden;margin:3px 0 8px}
+  .meter i{display:block;height:100%;width:0;background:var(--ok);border-radius:3px;
+    transition:width .4s}
+  .meter i.amber{background:var(--hosp)} .meter i.bad{background:var(--bad)}
+  button.act{width:100%;margin-top:6px;padding:8px 10px;border-radius:7px;cursor:pointer;
+    background:#16202e;color:var(--ink);border:1px solid var(--line);font-size:12px}
+  button.act:hover{background:#1d2a3b;border-color:#31445c}
+  button.act.primary{background:var(--scene);border-color:var(--scene);color:#04101f;font-weight:700}
+  button.act.danger{background:#2a1215;border-color:#5b2028;color:#ff9d96}
+  .tag{display:inline-block;padding:1px 7px;border-radius:4px;font-size:10px;font-weight:700;
+    letter-spacing:.3px}
+  .u3{background:#3d1418;color:#ff8b82}.u2{background:#3a2a10;color:#e3b341}
+  .u1{background:#16232f;color:#9fb3c8}.u0{background:#16232f;color:#8296ad}
+
+  /* ---------- STORY MODE ---------- */
+  #story{position:absolute;top:calc(var(--strip) + 18px);left:18px;width:430px;
+    max-height:calc(100vh - var(--strip) - 36px);overflow:auto;padding:18px 20px;z-index:700}
+  #story .head{display:flex;align-items:center;gap:9px;margin-bottom:3px}
+  #story .case{font-size:20px;font-weight:700;letter-spacing:-.2px}
+  #story .where{color:var(--dim);font-size:12.5px;margin-bottom:15px}
+  .beat{display:flex;gap:11px;padding:11px 0;border-top:1px solid #16202c;
+    opacity:0;transform:translateY(6px);animation:rise .45s forwards}
+  @keyframes rise{to{opacity:1;transform:none}}
+  .beat .mk{font-size:16px;line-height:1.3;flex:none;width:20px;text-align:center}
+  .beat .bd{flex:1}
+  .beat .t{font-weight:650;font-size:13.5px;margin-bottom:2px}
+  .beat .s{color:var(--dim);font-size:12px}
+  .beat.good .t{color:#7ee787}
+  .beat.ruled .t{color:#9fb3c8;font-weight:600}
+  .beat.bad .t{color:#ff8b82}
+  .beat.think .t{color:var(--dim);font-weight:600}
+  .dots::after{content:'';animation:dots 1.2s steps(4,end) infinite}
+  @keyframes dots{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}}
+  #verdict{margin-top:14px;padding-top:13px;border-top:1px solid var(--line);
+    display:none}
+  .sum{display:flex;justify-content:space-between;font-size:12px;padding:3px 0;color:var(--dim)}
+  .sum b{color:var(--ink);font-variant-numeric:tabular-nums}
+  .sum.tot{font-size:13.5px;color:var(--ink);font-weight:650;margin-top:5px;
+    padding-top:7px;border-top:1px solid #16202c}
+  .speedchip{margin-top:11px;padding:8px 11px;background:#0d1520;border:1px solid var(--line);
+    border-radius:8px;font-size:11.5px;color:var(--dim);text-align:center}
+  .speedchip b{color:var(--scene);font-variant-numeric:tabular-nums}
+  #storyctl{position:absolute;bottom:18px;left:18px;width:430px;padding:11px 14px;z-index:700;
+    display:flex;gap:9px;align-items:center}
+  #storyctl button{flex:1;margin:0}
+  #storyctl .cnt{color:var(--dim);font-size:11px;white-space:nowrap}
+
+  /* ---------- CITY MODE ---------- */
+  #hud{position:absolute;top:calc(var(--strip) + 14px);left:14px;width:288px;
+    padding:15px 17px;z-index:700}
+  #log{position:absolute;bottom:14px;left:14px;width:288px;max-height:32vh;
+    padding:9px 13px;overflow:auto;z-index:700}
+  #ctl{position:absolute;top:calc(var(--strip) + 14px);right:14px;width:248px;
+    padding:15px 17px;z-index:700}
+  #why{position:absolute;bottom:14px;right:14px;width:360px;padding:14px 16px;z-index:700}
+  .clock{color:var(--dim);font-size:11.5px;margin:-4px 0 12px}
+  .clock b{color:var(--ink);font-variant-numeric:tabular-nums}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px}
   .card{background:#0b111a;border:1px solid var(--line);border-radius:8px;padding:8px 10px}
   .card .k{color:var(--dim);font-size:9.5px;text-transform:uppercase;letter-spacing:.6px}
-  button{width:100%;margin-top:6px;padding:8px 10px;border-radius:7px;cursor:pointer;
-    background:#16202e;color:var(--ink);border:1px solid var(--line);font-size:12px;
-    transition:background .12s,border-color .12s}
-  button:hover{background:#1d2a3b;border-color:#31445c}
-  button.primary{background:var(--scene);border-color:var(--scene);color:#04101f;font-weight:700}
-  button.danger{background:#2a1215;border-color:#5b2028;color:#ff9d96}
-  input[type=range]{width:100%;margin:7px 0 0;accent-color:var(--scene)}
+  .card .v{font-size:19px;font-variant-numeric:tabular-nums;font-weight:650}
   .e{padding:5px 0;border-bottom:1px solid #16202c;font-size:11.5px}
   .e:last-child{border-bottom:0}
   .e .t{color:var(--dim);font-variant-numeric:tabular-nums}
-  .tag{display:inline-block;padding:0 5px;border-radius:3px;font-size:10px;font-weight:700}
-  .u3{background:#3d1418;color:#ff8b82}.u2{background:#3a2a10;color:#e3b341}
-  .u1,.u0{background:#16232f;color:#8296ad}
   .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px}
-  .legend{position:absolute;bottom:14px;right:14px;z-index:600;padding:10px 13px}
-  .legend div{display:flex;align-items:center;gap:8px;padding:2.5px 0;color:var(--dim);font-size:11px}
-  .sw{width:16px;height:3px;border-radius:2px;flex:none}
-  #boot{position:absolute;inset:0;z-index:900;display:flex;align-items:center;
-    justify-content:center;background:#070a0f;color:var(--dim);font-size:13px;
-    transition:opacity .4s}
-  /* map symbols */
+  .wrow{display:flex;gap:9px;align-items:baseline;padding:4px 0;font-size:11.5px;
+    border-bottom:1px solid #16202c}
+  .wrow:last-of-type{border-bottom:0}
+  .wrow .km{color:var(--dim);font-variant-numeric:tabular-nums;min-width:50px;text-align:right}
+  .wrow .nm{min-width:118px;color:var(--ink)}
+  .wrow.pick{color:#7ee787;font-weight:650}
+  .wrow.pick .nm{color:#7ee787}
+  .wrow.rej{color:#8296ad}
+
+  /* ---------- map furniture ---------- */
+  .legend{position:absolute;bottom:14px;right:14px;z-index:700;padding:11px 13px}
+  .legend div{display:flex;align-items:center;gap:9px;padding:2.5px 0;color:var(--dim);font-size:11px}
+  .sw{width:18px;height:3px;border-radius:2px;flex:none}
   .hosp{display:flex;align-items:center;justify-content:center;border-radius:5px;
     background:#f85149;color:#fff;font-weight:800;border:1.5px solid #ff9d96;
     box-shadow:0 0 0 3px rgba(248,81,73,.18)}
   .hosp.low{background:#d29922;border-color:#f0c674;box-shadow:0 0 0 3px rgba(210,153,34,.2)}
   .hosp.full{background:#3d4450;border-color:#5b6472;box-shadow:none}
-  .clock{color:var(--dim);font-size:11px;margin:-9px 0 12px}
-  .clock b{color:var(--ink);font-variant-numeric:tabular-nums}
-  .meter{height:4px;background:#0b111a;border-radius:3px;overflow:hidden;margin:3px 0 7px}
-  .meter i{display:block;height:100%;width:0;background:var(--ok);
-    border-radius:3px;transition:width .4s}
-  .meter i.amber{background:var(--hosp)} .meter i.bad{background:var(--bad)}
-  #why{position:absolute;top:14px;left:326px;width:330px;padding:13px 15px;z-index:600}
-  .dimtext{color:var(--dim);font-size:11.5px}
-  .wrow{display:flex;gap:8px;align-items:baseline;padding:3.5px 0;font-size:11.5px;
-    border-bottom:1px solid #16202c}
-  .wrow:last-child{border-bottom:0}
-  .wrow .km{color:var(--dim);font-variant-numeric:tabular-nums;min-width:52px}
-  .wrow .nm{min-width:74px}
-  .wrow.pick{color:#7ee787;font-weight:650}
-  .wrow.rej{color:#94a7bd}
-  .wsum{margin-top:8px;padding-top:8px;border-top:1px solid var(--line);
-    font-size:11.5px;color:var(--dim)}
-  .wsum b{color:var(--ink);font-variant-numeric:tabular-nums}
-  .zoomhint{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);z-index:600;
+  .hosp.pick{background:#3fb950;border-color:#7ee787;box-shadow:0 0 0 5px rgba(63,185,80,.25)}
+  .hosp.out{background:#2b3644;border-color:#46566b;opacity:.85}
+  .maplabel{background:rgba(11,17,26,.93);border:1px solid var(--line);border-radius:7px;
+    padding:4px 9px;font-size:11.5px;white-space:nowrap;color:var(--ink);
+    box-shadow:0 4px 16px rgba(0,0,0,.5)}
+  .maplabel .sub{color:var(--dim);font-size:10.5px}
+  .maplabel.rej{color:#9fb3c8}
+  .maplabel.rej b{color:#ff9d96;font-weight:600}
+  .zoomhint{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);z-index:700;
     padding:6px 12px;font-size:11px;color:var(--dim)}
+  #boot{position:absolute;inset:var(--strip) 0 0 0;z-index:900;display:flex;
+    align-items:center;justify-content:center;background:#070a0f;color:var(--dim);
+    transition:opacity .4s}
+  .hidden{display:none !important}
 </style>
 </head>
 <body>
-<div id="map"></div>
-<div id="boot">connecting to dispatch engine…</div>
 
-<div id="hud" class="panel">
-  <h1>HealthWay</h1>
-  <div class="sub">live emergency dispatch · 50,000 node road network</div>
+<div id="strip">
+  <div id="brand">HealthWay<small>rural emergency dispatch</small></div>
+  <div class="steps">
+    <div class="step"><span class="ic">🚑</span><span>finds the <b>nearest ambulance that can help</b></span></div>
+    <span class="arr">→</span>
+    <div class="step"><span class="ic">🏥</span><span>picks a hospital with the <b>right specialist, a bed and the medicine</b></span></div>
+    <span class="arr">→</span>
+    <div class="step"><span class="ic">🚧</span><span>routes <b>around closed roads</b></span></div>
+    <span class="arr">→</span>
+    <div class="step"><span class="ic">⏱</span><span>chooses by <b>total time, including the ER queue</b></span></div>
+  </div>
+  <div class="modes">
+    <button id="mStory" class="on">Watch one case</button>
+    <button id="mCity">Full city view</button>
+  </div>
+</div>
+
+<div id="map"></div>
+<div id="boot">starting the dispatch engine…</div>
+
+<!-- ============ STORY MODE ============ -->
+<div id="story" class="panel">
+  <div class="head"><span id="sTag" class="tag u3">CRITICAL</span>
+    <span id="sCase" class="case">waiting for the first call</span></div>
+  <div id="sWhere" class="where">&nbsp;</div>
+  <div id="beats"></div>
+  <div id="verdict">
+    <div class="sum"><span>ambulance reaches the patient</span><b id="vScene">—</b></div>
+    <div class="sum"><span>drive to hospital</span><b id="vHosp">—</b></div>
+    <div class="sum"><span>waiting for a doctor there</span><b id="vWait">—</b></div>
+    <div class="sum tot"><span>total time to treatment</span><b id="vTot">—</b></div>
+    <div class="speedchip">decision made in <b id="vUs">—</b> after checking
+      <b id="vCons">—</b> hospitals</div>
+  </div>
+</div>
+<div id="storyctl" class="panel">
+  <button id="sPlay" class="act primary">pause</button>
+  <button id="sNext" class="act">next case</button>
+  <span class="cnt"><b id="sCount">0</b> shown</span>
+</div>
+
+<!-- ============ CITY MODE ============ -->
+<div id="hud" class="panel hidden">
   <div class="clock">simulated time <b id="clock">10:00</b></div>
   <div class="grid2">
-    <div class="card"><div class="k">p50 latency</div><div class="big" id="p50">—</div></div>
-    <div class="card"><div class="k">p99 latency</div><div class="big" id="p99">—</div></div>
+    <div class="card"><div class="k">typical decision</div><div class="v" id="p50">—</div></div>
+    <div class="card"><div class="k">slowest decision</div><div class="v" id="p99">—</div></div>
   </div>
-  <h2>engine</h2>
-  <div class="row"><span>dispatches served</span><span id="served">—</span></div>
-  <div class="row"><span>nodes settled / query</span><span id="settled">—</span></div>
-  <div class="row"><span>hospitals evaluated</span><span id="considered">—</span></div>
-  <div class="row"><span>roads closed</span><span id="closed">—</span></div>
-  <h2>capacity</h2>
-  <div class="row"><span>ambulances busy</span><span id="busy">—</span></div>
+  <h2>capacity right now</h2>
+  <div class="row"><span>ambulances on a call</span><span id="busy">—</span></div>
   <div class="meter"><i id="mBusy"></i></div>
   <div class="row"><span>hospital beds free</span><span id="beds">—</span></div>
   <div class="meter"><i id="mBeds"></i></div>
   <div class="row"><span>medicine in stock</span><span id="meds">—</span></div>
-  <div class="meter"><i id="mMeds" class="amber"></i></div>
-  <div class="row"><span>doctors on duty</span><span id="docs">—</span></div>
+  <div class="meter"><i id="mMeds"></i></div>
+  <div class="row"><span>doctors on shift</span><span id="docs">—</span></div>
   <h2>queues</h2>
-  <div class="row"><span>missions in flight</span><span id="active">—</span></div>
+  <div class="row"><span>ambulances en route</span><span id="active">—</span></div>
   <div class="row"><span>waiting for a vehicle</span><span id="backlog">—</span></div>
   <div class="row"><span>served after waiting</span><span id="requeued">—</span></div>
-  <h2>outcomes</h2>
-  <div class="row"><span>dispatched</span><span id="disp">—</span></div>
-  <div class="row"><span>queued on arrival</span><span id="fail">—</span></div>
-  <div class="row"><span>response SLA met</span><span id="sla">—</span></div>
+  <h2>today</h2>
+  <div class="row"><span>emergencies handled</span><span id="disp">—</span></div>
+  <div class="row"><span>arrived on time</span><span id="sla">—</span></div>
+  <div class="row"><span>roads closed</span><span id="closed">—</span></div>
+  <div class="row"><span>hospitals checked / call</span><span id="considered">—</span></div>
 </div>
 
-<div id="ctl" class="panel">
+<div id="ctl" class="panel hidden">
   <h2 style="margin-top:0">simulation</h2>
-  <button id="run" class="primary">start</button>
+  <button id="run" class="act primary">start</button>
   <div style="margin-top:11px;color:var(--dim);font-size:11px">
-    emergencies / sec: <b id="rateval" style="color:var(--ink)">3</b></div>
-  <input type="range" id="rate" min="0" max="30" value="3">
-  <button id="surge">inject surge (60 at once)</button>
-  <h2>disruption</h2>
-  <button id="close" class="danger">close 2000 roads</button>
-  <button id="rebuild">rebuild hospital index</button>
-  <button id="reopen">reopen all roads</button>
+    emergencies per second: <b id="rateval" style="color:var(--ink)">1</b></div>
+  <input type="range" id="rate" min="0" max="20" step="0.5" value="1" style="width:100%;accent-color:var(--scene)">
+  <button id="surge" class="act">sudden surge — 60 at once</button>
+  <h2>break something</h2>
+  <button id="close" class="act danger">close 2,000 roads</button>
+  <button id="rebuild" class="act">recompute hospital distances</button>
+  <button id="reopen" class="act">reopen all roads</button>
   <h2>supply &amp; staffing</h2>
-  <button id="restock">restock all medicine</button>
-  <button id="night">jump to 03:00 (night shift)</button>
-  <button id="day">jump to 10:00 (day shift)</button>
+  <button id="restock" class="act">restock all medicine</button>
+  <button id="night" class="act">night shift (03:00)</button>
+  <button id="day" class="act">day shift (10:00)</button>
   <h2>view</h2>
-  <button id="fit">reset view</button>
+  <button id="fit" class="act">reset map</button>
 </div>
 
-<div class="panel legend">
-  <div><span class="sw" style="background:#3b9dff;height:4px"></span> ambulance → incident</div>
-  <div><span class="sw" style="background:#f0b429;height:4px"></span> incident → hospital</div>
-  <div><span class="sw" style="background:#f85149;border-radius:2px;height:9px;width:9px"></span> hospital</div>
-  <div><span class="dot" style="background:#8fa3ba;margin:0"></span> ambulance idle</div>
-  <div><span class="dot" style="background:#3b9dff;margin:0"></span> ambulance responding</div>
+<div id="why" class="panel hidden">
+  <h2 style="margin-top:0">why this hospital</h2>
+  <div id="whybody" style="color:var(--dim);font-size:11.5px">waiting for the first dispatch…</div>
+</div>
+
+<div id="log" class="panel hidden"></div>
+
+<div id="legend" class="panel legend hidden">
+  <div><span class="sw" style="background:#3b9dff;height:4px"></span> ambulance → patient</div>
+  <div><span class="sw" style="background:#f0b429;height:4px"></span> patient → hospital</div>
+  <div><span class="dot" style="background:#f85149;margin:0;border-radius:2px;width:9px;height:9px"></span> hospital</div>
+  <div><span class="dot" style="background:#8fa3ba;margin:0"></span> ambulance waiting</div>
+  <div><span class="dot" style="background:#3b9dff;margin:0"></span> ambulance on a call</div>
   <div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--line)">
     <span class="sw" style="background:#3f5f86;height:3px"></span> highway</div>
-  <div><span class="sw" style="background:#28405c;height:2px"></span> arterial</div>
+  <div><span class="sw" style="background:#28405c;height:2px"></span> main road</div>
   <div><span class="sw" style="background:#16212e;height:1.5px"></span> local street</div>
 </div>
 
-<div id="zoomhint" class="panel zoomhint">zoom in to reveal local streets</div>
+<div id="zoomhint" class="panel zoomhint hidden">zoom in to see local streets</div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-/* The network is synthetic, so there is no real geography to sit beneath it.
-   CRS.Simple maps engine metres straight to map units -- honest, and it means
-   no tile server is contacted, so the demo runs with no internet. */
-const S = 100;                                  /* metres per map unit */
-const P = (c) => [c[1] / S, c[0] / S];          /* engine [x,y] -> leaflet [lat,lng] */
+/* ============================ naming ============================
+   "hospital 42" means nothing to a person watching. Names are derived
+   deterministically from the id, so they are stable across reloads. */
+const HN_A = ['Riverside','St. Mary','City General','Greenfield','Hillcrest','Lakeview',
+  'Northgate','Southbank','Oakwood','Pinecrest','Westfield','Eastbrook','Sunrise',
+  'Cedar Park','Fairview','Highland','Brookside','Meadowvale','Stonebridge','Kingsway'];
+const HN_B = ['Hospital','Medical Centre','Regional Hospital'];
+const hospName = (id) => `${HN_A[id % HN_A.length]} ${HN_B[Math.floor(id / HN_A.length) % HN_B.length]}`;
+const URG = ['LOW','MEDIUM','HIGH','CRITICAL'];
+const mins = (ms) => (ms / 60000) < 1 ? '<1 min' : Math.round(ms / 60000) + ' min';
+const minsX = (ms) => (ms / 60000).toFixed(1) + ' min';
+
+let BOUNDS_RAW = null;
+function district(x, y) {
+  if (!BOUNDS_RAW) return 'the district';
+  const cx = Math.min(4, Math.floor((x - BOUNDS_RAW.minx) / ((BOUNDS_RAW.maxx - BOUNDS_RAW.minx) / 5)));
+  const cy = Math.min(3, Math.floor((y - BOUNDS_RAW.miny) / ((BOUNDS_RAW.maxy - BOUNDS_RAW.miny) / 4)));
+  return 'District ' + (cy * 5 + cx + 1);
+}
+function polyKm(pts) {           /* pts are engine metres */
+  let m = 0;
+  for (let i = 1; i < pts.length; i++)
+    m += Math.hypot(pts[i][0] - pts[i-1][0], pts[i][1] - pts[i-1][1]);
+  return m / 1000;
+}
+
+/* ============================ map ============================ */
+const S = 100;
+const P = (c) => [c[1] / S, c[0] / S];
 
 const map = L.map('map', { crs: L.CRS.Simple, minZoom: -4, maxZoom: 4,
-                           zoomControl: true, attributionControl: false,
-                           preferCanvas: true, zoomSnap: .5 });
-/* Roads go on their own canvas renderer: ~100k segments as a handful of
-   multi-polylines, not 100k DOM nodes. */
+  zoomControl: false, attributionControl: false, preferCanvas: true, zoomSnap: .5 });
+L.control.zoom({ position: 'bottomleft' }).addTo(map);
+
 const roadCanvas = L.canvas({ padding: .4 });
 const unitCanvas = L.canvas({ padding: .4 });
 const roadLayers = {};
 const staticLayer = L.layerGroup().addTo(map);
 const routeLayer  = L.layerGroup().addTo(map);
 const unitLayer   = L.layerGroup().addTo(map);
+const storyLayer  = L.layerGroup().addTo(map);
 
 const missions = new Map();
-let fleetDots = new Map(), hospMark = new Map(), hospBeds = new Map(), bounds = null;
-const LOCAL_ZOOM = 0.5;                          /* below this, local streets hide */
+let fleetDots = new Map(), hospMark = new Map(), hospInfo = new Map(), bounds = null;
+const LOCAL_ZOOM = 0.5;
 
-/* ---------- websocket ---------- */
+/* ============================ socket ============================ */
 const ws = new WebSocket(`ws://${location.host}`);
 const send = (o) => ws.readyState === 1 && ws.send(JSON.stringify(o));
 ws.onmessage = (ev) => {
   const m = JSON.parse(ev.data);
-  ({ init: onInit, roads: onRoads, telemetry: onTelemetry, dispatch: onDispatch,
-     release: onRelease, failed: onFailed,
-     log: (x) => logLine(x.text, x.level) }[m.type] || (() => {}))(m);
+  const h = { init: onInit, roads: onRoads, telemetry: onTelemetry,
+              dispatch: onDispatch, release: onRelease, failed: onFailed,
+              log: (x) => logLine(x.text, x.level) }[m.type];
+  if (h) { try { h(m); } catch (e) { console.error('handler', m.type, e); } }
 };
-ws.onclose = () => logLine('bridge disconnected', 'bad');
+ws.onclose = () => logLine('connection to the dispatch bridge lost', 'bad');
 
-/* ---------- static map ---------- */
 function onInit(m) {
-  staticLayer.clearLayers(); hospMark.clear(); fleetDots.clear();
-  const b = m.bounds;
-  bounds = [P([b.minx, b.miny]), P([b.maxx, b.maxy])];
+  staticLayer.clearLayers(); hospMark.clear(); fleetDots.clear(); hospInfo.clear();
+  BOUNDS_RAW = m.bounds;
+  bounds = [P([m.bounds.minx, m.bounds.miny]), P([m.bounds.maxx, m.bounds.maxy])];
   map.fitBounds(bounds, { padding: [30, 30] });
 
   for (const h of m.hospitals) {
     const size = 13 + Math.round(Math.sqrt(h.beds_total));
-    const mk = L.marker(P([h.x, h.y]), {
-      icon: L.divIcon({ className: '', iconSize: [size, size],
-        iconAnchor: [size / 2, size / 2],
-        html: `<div class="hosp" style="width:${size}px;height:${size}px;font-size:${size*.62}px">+</div>` }),
-      zIndexOffset: 400 }).addTo(staticLayer);
-    mk.bindTooltip(`hospital ${h.id} — ${h.beds_free}/${h.beds_total} beds`, { direction: 'top' });
-    hospMark.set(h.id, mk); hospBeds.set(h.id, h.beds_total);
+    const mk = L.marker(P([h.x, h.y]), { zIndexOffset: 400,
+      icon: L.divIcon({ className: '', iconSize: [size, size], iconAnchor: [size/2, size/2],
+        html: `<div class="hosp" style="width:${size}px;height:${size}px;font-size:${size*.62}px">+</div>` })
+    }).addTo(staticLayer);
+    mk.bindTooltip(`${hospName(h.id)} — ${h.beds_free}/${h.beds_total} beds`, { direction: 'top' });
+    hospMark.set(h.id, mk);
+    hospInfo.set(h.id, { x: h.x, y: h.y, total: h.beds_total });
   }
   for (const a of m.fleet) {
-    const d = L.circleMarker(P([a.x, a.y]), { renderer: unitCanvas, radius: 3.2,
-      color: '#0b1119', weight: 1, fillColor: '#8fa3ba', fillOpacity: 1 }).addTo(staticLayer);
-    fleetDots.set(a.id, d);
+    fleetDots.set(a.id, L.circleMarker(P([a.x, a.y]), { renderer: unitCanvas, radius: 3.2,
+      color: '#0b1119', weight: 1, fillColor: '#8fa3ba', fillOpacity: 1 }).addTo(staticLayer));
   }
   logLine(`network online — ${m.hospitals.length} hospitals, ${m.fleet.length} ambulances`, 'ok');
 }
 
-/* Three multi-polylines, one per road class, drawn to a canvas. */
 function onRoads(m) {
-  const STYLE = {
-    2: { color: '#16212e', weight: 1.0 },     /* local streets  */
-    1: { color: '#28405c', weight: 1.7 },     /* arterials      */
-    0: { color: '#3f5f86', weight: 2.6 },     /* highways       */
-  };
-  let total = 0;
+  const STYLE = { 2:{color:'#16212e',weight:1.0}, 1:{color:'#28405c',weight:1.7},
+                  0:{color:'#3f5f86',weight:2.6} };
   for (const cls of [2, 1, 0]) {
-    const flat = m.roads[cls] || [];
-    const segs = [];
+    const flat = m.roads[cls] || [], segs = [];
     for (let i = 0; i + 3 < flat.length; i += 4)
-      segs.push([P([flat[i], flat[i + 1]]), P([flat[i + 2], flat[i + 3]])]);
-    total += segs.length;
+      segs.push([P([flat[i], flat[i+1]]), P([flat[i+2], flat[i+3]])]);
     roadLayers[cls] = L.polyline(segs, { ...STYLE[cls], renderer: roadCanvas,
-                                         interactive: false, lineCap: 'butt' });
+      interactive: false, lineCap: 'butt' });
     if (cls !== 2 || map.getZoom() >= LOCAL_ZOOM) roadLayers[cls].addTo(map);
   }
-  roadLayers[2].bringToBack?.();
   applyZoom();
-  logLine(`road network drawn — ${total.toLocaleString()} segments`, 'ok');
   const boot = document.getElementById('boot');
   boot.style.opacity = 0; setTimeout(() => boot.remove(), 450);
+  startStory();
 }
-
-/* Local streets are sub-pixel when the whole district is in view, so drawing
-   them there costs frames and shows nothing. Same trick every real map uses. */
 function applyZoom() {
-  const l = roadLayers[2];
-  if (!l) return;
+  const l = roadLayers[2]; if (!l) return;
   const show = map.getZoom() >= LOCAL_ZOOM;
   if (show && !map.hasLayer(l)) l.addTo(map);
   if (!show && map.hasLayer(l)) map.removeLayer(l);
-  document.getElementById('zoomhint').style.display = show ? 'none' : 'block';
+  const zh = $('zoomhint');
+  zh.classList.toggle('hidden', show || mode !== 'city');
 }
 map.on('zoomend', applyZoom);
 
-/* ---------- missions ---------- */
+/* ============================ mission animation ============================ */
 function pathLen(pts) {
   let d = 0; const acc = [0];
   for (let i = 1; i < pts.length; i++) {
-    d += Math.hypot(pts[i][0] - pts[i-1][0], pts[i][1] - pts[i-1][1]); acc.push(d);
+    d += Math.hypot(pts[i][0]-pts[i-1][0], pts[i][1]-pts[i-1][1]); acc.push(d);
   }
   return { total: d || 1, acc };
 }
@@ -259,101 +373,8 @@ function at(pts, meta, f) {
   while (i < meta.acc.length - 1 && meta.acc[i] < want) i++;
   const seg = meta.acc[i] - meta.acc[i-1] || 1;
   const t = (want - meta.acc[i-1]) / seg;
-  return [pts[i-1][0] + (pts[i][0] - pts[i-1][0]) * t,
-          pts[i-1][1] + (pts[i][1] - pts[i-1][1]) * t];
+  return [pts[i-1][0] + (pts[i][0]-pts[i-1][0])*t, pts[i-1][1] + (pts[i][1]-pts[i-1][1])*t];
 }
-
-function onDispatch(m) {
-  const l1 = (m.leg1 || []).map(P), l2 = (m.leg2 || []).map(P);
-  if (l1.length < 2 && l2.length < 2) return;
-  const g = L.layerGroup().addTo(routeLayer);
-
-  if (l1.length > 1) {
-    L.polyline(l1, { color: '#3b9dff', weight: 5, opacity: .16, interactive: false }).addTo(g);
-    L.polyline(l1, { color: '#3b9dff', weight: 2.4, opacity: .95, interactive: false }).addTo(g);
-  }
-  if (l2.length > 1) {
-    L.polyline(l2, { color: '#f0b429', weight: 2.2, opacity: .8, dashArray: '6,5',
-                     interactive: false }).addTo(g);
-  }
-  const inc = m.incident ? P(m.incident) : l1[l1.length - 1];
-  L.circleMarker(inc, { radius: 7, color: '#f85149', weight: 2, opacity: .9,
-                        fillOpacity: 0, interactive: false }).addTo(g);
-  L.circleMarker(inc, { radius: 2.5, color: '#f85149', weight: 0,
-                        fillColor: '#f85149', fillOpacity: 1, interactive: false }).addTo(g);
-
-  const unit = L.circleMarker(l1[0] || l2[0], { renderer: unitCanvas, radius: 5,
-    color: '#fff', weight: 1.6, fillColor: '#3b9dff', fillOpacity: 1 }).addTo(unitLayer);
-
-  lastConsidered = m.considered || lastConsidered;
-  const dur = (m.t_scene_ms + m.t_hosp_ms) / 60;      /* 60x time compression */
-  missions.set(m.id, { l1, l2, m1: pathLen(l1), m2: pathLen(l2), unit, g,
-    t0: performance.now(), dur: Math.max(500, Math.min(dur, 60000)),
-    split: m.t_scene_ms / Math.max(1, m.t_scene_ms + m.t_hosp_ms) });
-
-  const dot = fleetDots.get(m.amb);
-  if (dot) dot.setStyle({ fillColor: '#3b9dff', radius: 4 });
-  updateHosp(m.hosp, m.beds_free);
-  renderWhy(m);
-
-  const passed = m.rejected.length
-    ? ` · passed ${m.rejected.length} closer (${m.rejected[0].why})` : '';
-  logLine(
-    `<span class="tag u${m.urgency}">U${m.urgency}</span> ${m.spec} → amb ${m.amb}, ` +
-    `hosp ${m.hosp} · ${(m.t_total_ms/60000).toFixed(1)} min total${passed}` +
-    (m.fromBacklog ? ' <b style="color:#3fb950">[from queue]</b>' : '') +
-    (m.sla_met ? '' : ' <b style="color:#f85149">SLA miss</b>') +
-    ` <span class="t">${m.latency_us.toFixed(0)}µs</span>`,
-    m.sla_met ? 'ok' : 'warn');
-}
-/* The cost-transparency panel. The engine hands back every closer hospital it
-   passed over and the reason, so this is a readout, not a reconstruction. */
-function renderWhy(m) {
-  const mins = (ms) => (ms / 60000).toFixed(1) + ' min';
-  let html = `<div class="dimtext" style="margin-bottom:7px">`
-    + `<b style="color:var(--ink)">${m.spec}</b> · urgency ${m.urgency} · `
-    + `needs ${m.qty}× ${m.med}</div>`;
-  for (const r of m.rejected) {
-    html += `<div class="wrow rej"><span class="km">${mins(r.travel_ms)}</span>`
-          + `<span class="nm">hospital ${r.hosp}</span>`
-          + `<span>✕ ${r.why}</span></div>`;
-  }
-  html += `<div class="wrow pick"><span class="km">${mins(m.t_hosp_ms)}</span>`
-        + `<span class="nm">hospital ${m.hosp}</span><span>✓ chosen</span></div>`;
-  html += `<div class="wsum">`
-        + `response <b>${mins(m.t_scene_ms)}</b> + transport <b>${mins(m.t_hosp_ms)}</b>`
-        + ` + queue <b>${mins(m.wait_ms)}</b> = total cost <b>${mins(m.t_total_ms)}</b><br>`
-        + `${m.considered} hospitals evaluated in <b>${m.latency_us.toFixed(0)} µs</b>`
-        + (m.rejected.length ? '' : ' · nearest was already the best')
-        + `</div>`;
-  $('whybody').innerHTML = html;
-}
-
-function updateHosp(id, free) {
-  const mk = hospMark.get(id); if (!mk) return;
-  const total = hospBeds.get(id) || 1;
-  const el = mk.getElement()?.querySelector('.hosp'); if (!el) return;
-  el.classList.toggle('low', free > 0 && free / total < .35);
-  el.classList.toggle('full', free <= 0);
-  mk.setTooltipContent(`hospital ${id} — ${free}/${total} beds`);
-}
-function onRelease(m) {
-  const s = missions.get(m.id);
-  if (s) { routeLayer.removeLayer(s.g); unitLayer.removeLayer(s.unit); missions.delete(m.id); }
-  const dot = fleetDots.get(m.amb);
-  if (dot) dot.setStyle({ fillColor: '#8fa3ba', radius: 3.2 });
-}
-function onFailed(m) {
-  if (m.incident) {
-    const x = L.circleMarker(P(m.incident), { radius: 11, color: '#f85149',
-      weight: 2.5, fillOpacity: 0, dashArray: '3,3' }).addTo(routeLayer);
-    setTimeout(() => routeLayer.removeLayer(x), 4500);
-  }
-  logLine(`<span class="tag u${m.urgency}">U${m.urgency}</span> ${m.spec} — `
-        + `<b style="color:#f85149">${m.reason}</b>`
-        + (m.queued ? ' <span style="color:#d29922">→ queued by urgency</span>' : ''), 'bad');
-}
-
 function tick(now) {
   for (const s of missions.values()) {
     const f = Math.min(1, (now - s.t0) / s.dur);
@@ -371,9 +392,248 @@ function tick(now) {
 }
 requestAnimationFrame(tick);
 
-/* ---------- telemetry ---------- */
+/* ============================ events ============================ */
 const $ = (id) => document.getElementById(id);
 let lastConsidered = 0;
+
+function onDispatch(m) {
+  lastConsidered = m.considered || lastConsidered;
+  if (mode === 'story') { storyQueue.push(m); pumpStory(); return; }
+
+  const l1 = (m.leg1 || []).map(P), l2 = (m.leg2 || []).map(P);
+  if (l1.length < 2 && l2.length < 2) return;
+  const g = L.layerGroup().addTo(routeLayer);
+  if (l1.length > 1) {
+    L.polyline(l1, { color:'#3b9dff', weight:5, opacity:.16, interactive:false }).addTo(g);
+    L.polyline(l1, { color:'#3b9dff', weight:2.4, opacity:.95, interactive:false }).addTo(g);
+  }
+  if (l2.length > 1)
+    L.polyline(l2, { color:'#f0b429', weight:2.2, opacity:.8, dashArray:'6,5', interactive:false }).addTo(g);
+
+  const inc = m.incident ? P(m.incident) : l1[l1.length-1];
+  L.circleMarker(inc, { radius:7, color:'#f85149', weight:2, opacity:.9, fillOpacity:0, interactive:false }).addTo(g);
+  L.circleMarker(inc, { radius:2.5, color:'#f85149', weight:0, fillColor:'#f85149', fillOpacity:1, interactive:false }).addTo(g);
+
+  /* floating annotation so the viewer never has to look away from the map */
+  const lbl = L.marker(inc, { interactive: false, zIndexOffset: 900,
+    icon: L.divIcon({ className: '', iconSize: [0,0], iconAnchor: [-11, 8],
+      html: `<div class="maplabel">${m.spec}<span class="sub"> · ${URG[m.urgency].toLowerCase()}</span></div>` })
+  }).addTo(g);
+  setTimeout(() => { try { g.removeLayer(lbl); } catch {} }, 5200);
+
+  const unit = L.circleMarker(l1[0] || l2[0], { renderer: unitCanvas, radius:5,
+    color:'#fff', weight:1.6, fillColor:'#3b9dff', fillOpacity:1 }).addTo(unitLayer);
+  const dur = (m.t_scene_ms + m.t_hosp_ms) / 60;
+  missions.set(m.id, { l1, l2, m1: pathLen(l1), m2: pathLen(l2), unit, g,
+    t0: performance.now(), dur: Math.max(500, Math.min(dur, 60000)),
+    split: m.t_scene_ms / Math.max(1, m.t_scene_ms + m.t_hosp_ms) });
+
+  const dot = fleetDots.get(m.amb);
+  if (dot) dot.setStyle({ fillColor:'#3b9dff', radius:4 });
+  updateHosp(m.hosp, m.beds_free);
+  renderWhy(m);
+
+  const passed = m.rejected.length
+    ? ` · passed ${m.rejected.length} closer` : '';
+  logLine(`<span class="tag u${m.urgency}">${URG[m.urgency]}</span> ${m.spec} → `
+    + `${hospName(m.hosp)} · ${mins(m.t_total_ms)} total${passed}`
+    + (m.fromBacklog ? ' <b style="color:#3fb950">[was queued]</b>' : '')
+    + (m.sla_met ? '' : ' <b style="color:#f85149">late</b>'),
+    m.sla_met ? 'ok' : 'warn');
+}
+
+function renderWhy(m) {
+  let html = `<div style="margin-bottom:8px"><b style="color:var(--ink)">${m.spec}</b>`
+    + ` · ${URG[m.urgency].toLowerCase()} · needs ${m.qty}× ${m.med}</div>`;
+  for (const r of m.rejected)
+    html += `<div class="wrow rej"><span class="km">${minsX(r.travel_ms)}</span>`
+          + `<span class="nm">${hospName(r.hosp)}</span><span>✕ ${r.why}</span></div>`;
+  html += `<div class="wrow pick"><span class="km">${minsX(m.t_hosp_ms)}</span>`
+        + `<span class="nm">${hospName(m.hosp)}</span><span>✓ chosen</span></div>`
+        + `<div style="margin-top:9px;padding-top:8px;border-top:1px solid var(--line);color:var(--dim)">`
+        + `reach patient <b style="color:var(--ink)">${minsX(m.t_scene_ms)}</b>`
+        + ` + drive <b style="color:var(--ink)">${minsX(m.t_hosp_ms)}</b>`
+        + ` + ER queue <b style="color:var(--ink)">${minsX(m.wait_ms)}</b>`
+        + ` = <b style="color:var(--ink)">${minsX(m.t_total_ms)}</b><br>`
+        + `${m.considered} hospitals checked in <b style="color:var(--scene)">${m.latency_us.toFixed(0)} µs</b></div>`;
+  $('whybody').innerHTML = html;
+}
+
+function updateHosp(id, free) {
+  const mk = hospMark.get(id); if (!mk) return;
+  const info = hospInfo.get(id) || { total: 1 };
+  const el = mk.getElement()?.querySelector('.hosp'); if (!el) return;
+  el.classList.toggle('low', free > 0 && free / info.total < .35);
+  el.classList.toggle('full', free <= 0);
+  mk.setTooltipContent(`${hospName(id)} — ${free}/${info.total} beds`);
+}
+function onRelease(m) {
+  const s = missions.get(m.id);
+  if (s) { routeLayer.removeLayer(s.g); unitLayer.removeLayer(s.unit); missions.delete(m.id); }
+  const dot = fleetDots.get(m.amb);
+  if (dot) dot.setStyle({ fillColor:'#8fa3ba', radius:3.2 });
+}
+function onFailed(m) {
+  if (mode === 'story') { storyQueue.push({ failed: true, ...m }); pumpStory(); return; }
+  if (m.incident) {
+    const x = L.circleMarker(P(m.incident), { radius:11, color:'#f85149', weight:2.5,
+      fillOpacity:0, dashArray:'3,3' }).addTo(routeLayer);
+    setTimeout(() => routeLayer.removeLayer(x), 4500);
+  }
+  logLine(`<span class="tag u${m.urgency}">${URG[m.urgency]}</span> ${m.spec} — `
+    + `<b style="color:#f85149">${m.reason}</b>`
+    + (m.queued ? ' <span style="color:#d29922">→ waiting in the urgency queue</span>' : ''), 'bad');
+}
+
+/* ============================ story mode ============================ */
+let mode = 'story', storyQueue = [], storyBusy = false, storyOn = true, shown = 0;
+let storyTimers = [];
+
+function clearTimers() { storyTimers.forEach(clearTimeout); storyTimers = []; }
+function later(fn, ms) { storyTimers.push(setTimeout(fn, ms)); }
+
+function beat(mark, title, sub, cls) {
+  const d = document.createElement('div');
+  d.className = 'beat ' + (cls || '');
+  d.innerHTML = `<div class="mk">${mark}</div><div class="bd">`
+    + `<div class="t">${title}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`;
+  $('beats').appendChild(d);
+  $('story').scrollTop = $('story').scrollHeight;
+  return d;
+}
+
+function startStory() {
+  if (mode !== 'story') return;
+  send({ type: 'run', value: false });
+  nextCase();
+}
+function nextCase() {
+  if (mode !== 'story' || !storyOn) return;
+  send({ type: 'oneshot' });
+}
+function pumpStory() {
+  if (storyBusy || !storyQueue.length || mode !== 'story') return;
+  playCase(storyQueue.shift());
+}
+
+function playCase(m) {
+  storyBusy = true;
+  clearTimers();
+  storyLayer.clearLayers();
+  $('beats').innerHTML = '';
+  $('verdict').style.display = 'none';
+
+  const urg = m.urgency ?? 3;
+  $('sTag').className = 'tag u' + urg;
+  $('sTag').textContent = URG[urg];
+  $('sCase').textContent = m.spec;
+  $('sWhere').textContent = 'reported in ' + district(m.incident[0], m.incident[1]);
+  shown++; $('sCount').textContent = shown;
+
+  const inc = P(m.incident);
+  L.circleMarker(inc, { radius:9, color:'#f85149', weight:2.5, fillOpacity:0 }).addTo(storyLayer);
+  L.circleMarker(inc, { radius:3.5, color:'#f85149', weight:0, fillColor:'#f85149', fillOpacity:1 }).addTo(storyLayer);
+  L.marker(inc, { interactive:false, zIndexOffset:900,
+    icon: L.divIcon({ className:'', iconSize:[0,0], iconAnchor:[-13,9],
+      html:`<div class="maplabel"><b>${m.spec}</b><span class="sub"> · ${URG[urg].toLowerCase()}</span></div>` })
+  }).addTo(storyLayer);
+  map.flyTo(inc, Math.max(map.getZoom(), 1.5), { duration: .9 });
+
+  beat('🚨', `${m.spec} reported`, `in ${district(m.incident[0], m.incident[1])}`, '');
+
+  if (m.failed) {
+    later(() => beat('🔎', 'Searching for a free ambulance<span class="dots"></span>', '', 'think'), 700);
+    later(() => {
+      $('beats').lastChild.remove();
+      beat('❌', 'No ambulance available', m.reason, 'bad');
+      beat('⏳', 'Placed in the urgency queue',
+        'It keeps its place ahead of less urgent calls and is dispatched the moment a vehicle frees up.', 'ruled');
+      finishCase(3200);
+    }, 2100);
+    return;
+  }
+
+  const km1 = polyKm(m.leg1 || []), km2 = polyKm(m.leg2 || []);
+  let think;
+  later(() => { think = beat('🔎',
+    `Checking every ambulance and hospital<span class="dots"></span>`,
+    `${m.considered} hospitals are reachable from here`, 'think'); }, 700);
+
+  later(() => {
+    if (think) think.remove();
+    beat('🚑', `Ambulance ${m.amb} is on the way`,
+      `${km1.toFixed(1)} km away — reaches the patient in ${mins(m.t_scene_ms)}`, 'good');
+    drawLeg(m.leg1, '#3b9dff', false);
+  }, 2200);
+
+  later(() => {
+    beat('🏥', `Taking them to ${hospName(m.hosp)}`,
+      `${km2.toFixed(1)} km — has the right specialist on shift, a free bed and the medicine in stock`
+      + (m.wait_ms > 0 ? ` · about ${mins(m.wait_ms)} wait at the door` : ' · seen on arrival'), 'good');
+    drawLeg(m.leg2, '#f0b429', true);
+    markHospital(m.hosp, 'pick', `${hospName(m.hosp)}`, 'chosen');
+    fitStory(m);
+  }, 3600);
+
+  let t = 5000;
+  (m.rejected || []).slice(0, 3).forEach((r) => {
+    later(() => {
+      beat('❌', `Not ${hospName(r.hosp)}`,
+        `Only ${minsX(r.travel_ms)} away — closer than the one chosen — but ${r.why}.`, 'ruled');
+      markHospital(r.hosp, 'out', hospName(r.hosp), r.why);
+    }, t);
+    t += 900;
+  });
+
+  later(() => {
+    $('vScene').textContent = mins(m.t_scene_ms);
+    $('vHosp').textContent  = mins(m.t_hosp_ms);
+    $('vWait').textContent  = m.wait_ms > 0 ? mins(m.wait_ms) : 'none';
+    $('vTot').textContent   = mins(m.t_total_ms);
+    $('vUs').textContent    = m.latency_us.toFixed(0) + ' µs';
+    $('vCons').textContent  = m.considered;
+    $('verdict').style.display = 'block';
+    $('story').scrollTop = $('story').scrollHeight;
+  }, t + 200);
+
+  finishCase(t + 3400);
+}
+
+function finishCase(ms) {
+  later(() => { storyBusy = false; if (storyOn) nextCase(); else pumpStory(); }, ms);
+}
+function drawLeg(coords, color, dashed) {
+  if (!coords || coords.length < 2) return;
+  const pts = coords.map(P);
+  L.polyline(pts, { color, weight:6, opacity:.15, interactive:false }).addTo(storyLayer);
+  L.polyline(pts, { color, weight:3, opacity:.95, interactive:false,
+    dashArray: dashed ? '7,6' : null }).addTo(storyLayer);
+}
+function markHospital(id, kind, name, note) {
+  const info = hospInfo.get(id); if (!info) return;
+  const p = P([info.x, info.y]);
+  const size = 20;
+  L.marker(p, { zIndexOffset: 700, interactive: false,
+    icon: L.divIcon({ className:'', iconSize:[size,size], iconAnchor:[size/2,size/2],
+      html:`<div class="hosp ${kind}" style="width:${size}px;height:${size}px;font-size:13px">`
+         + `${kind === 'pick' ? '+' : '✕'}</div>` }) }).addTo(storyLayer);
+  L.marker(p, { zIndexOffset: 800, interactive: false,
+    icon: L.divIcon({ className:'', iconSize:[0,0], iconAnchor:[-14, 8],
+      html:`<div class="maplabel ${kind === 'pick' ? '' : 'rej'}">${name}`
+         + `<span class="sub"> · ${kind === 'pick' ? note : ''}</span>`
+         + `${kind === 'pick' ? '' : `<br><b>${note}</b>`}</div>` }) }).addTo(storyLayer);
+}
+function fitStory(m) {
+  const pts = [P(m.incident)];
+  (m.leg1 || []).forEach((c) => pts.push(P(c)));
+  (m.leg2 || []).forEach((c) => pts.push(P(c)));
+  (m.rejected || []).slice(0, 3).forEach((r) => {
+    const i = hospInfo.get(r.hosp); if (i) pts.push(P([i.x, i.y]));
+  });
+  if (pts.length > 1) map.flyToBounds(L.latLngBounds(pts).pad(.35), { duration: .8 });
+}
+
+/* ============================ telemetry ============================ */
 function meter(id, frac, warnBelow) {
   const el = $(id); if (!el) return;
   el.style.width = Math.max(0, Math.min(1, frac)) * 100 + '%';
@@ -383,40 +643,71 @@ function onTelemetry(m) {
   const e = m.engine || {};
   $('p50').textContent = m.p50 ? m.p50.toFixed(0) + 'µs' : '—';
   $('p99').textContent = m.p99 ? m.p99.toFixed(0) + 'µs' : '—';
-  $('served').textContent = (e.served || 0).toLocaleString();
-  $('settled').textContent = m.meanSettled ? m.meanSettled.toFixed(0) : '—';
   $('considered').textContent = lastConsidered || '—';
   $('closed').textContent = (m.closedRoads || 0).toLocaleString();
   $('busy').textContent = `${e.busy || 0} / ${e.ambulances || 0}`;
   meter('mBusy', 1 - (e.busy || 0) / Math.max(1, e.ambulances || 1), .25);
-  $('beds').textContent = (e.beds_free || 0).toLocaleString();
-  meter('mBeds', (e.beds_free || 0) / Math.max(1, e.beds_total || e.beds_free || 1), .25);
+  $('beds').textContent = `${(e.beds_free || 0).toLocaleString()} / ${(e.beds_total || 0).toLocaleString()}`;
+  meter('mBeds', (e.beds_free || 0) / Math.max(1, e.beds_total || 1), .25);
   $('meds').textContent = `${(e.med || 0).toLocaleString()} / ${(e.med_cap || 0).toLocaleString()}`;
   meter('mMeds', (e.med || 0) / Math.max(1, e.med_cap || 1), .3);
   $('docs').textContent = e.doctors_on_duty || '—';
   const ms = m.clock || 0;
-  $('clock').textContent = String(Math.floor(ms / 3600000)).padStart(2, '0') + ':'
-    + String(Math.floor(ms / 60000) % 60).padStart(2, '0');
+  $('clock').textContent = String(Math.floor(ms / 3600000)).padStart(2,'0') + ':'
+    + String(Math.floor(ms / 60000) % 60).padStart(2,'0');
   $('active').textContent = m.active;
   $('backlog').textContent = m.backlog || 0;
   $('requeued').textContent = (m.requeued || 0).toLocaleString();
   $('disp').textContent = m.dispatched.toLocaleString();
-  $('fail').textContent = m.failed.toLocaleString();
-  const sla = m.slaPct;
-  $('sla').innerHTML = `<span style="color:${sla > 90 ? '#3fb950' : sla > 70 ? '#d29922' : '#f85149'}">`
-    + sla.toFixed(1) + '%</span>';
+  const sla = m.slaPct || 0;
+  $('sla').innerHTML = `<span style="color:${sla>90?'#3fb950':sla>70?'#d29922':'#f85149'}">`
+    + sla.toFixed(0) + '%</span>';
 }
 function logLine(html, level) {
-  const box = $('log');
+  const box = $('log'); if (!box) return;
   const d = document.createElement('div');
   d.className = 'e';
-  const c = { ok: '#3fb950', warn: '#d29922', bad: '#f85149' }[level] || '#7f93aa';
+  const c = { ok:'#3fb950', warn:'#d29922', bad:'#f85149' }[level] || '#8296ad';
   d.innerHTML = `<span class="dot" style="background:${c}"></span>${html}`;
   box.prepend(d);
   while (box.children.length > 60) box.lastChild.remove();
 }
 
-/* ---------- controls ---------- */
+/* ============================ modes ============================ */
+const STORY_EL = ['story','storyctl'];
+const CITY_EL  = ['hud','ctl','why','log','legend'];
+function setMode(next) {
+  mode = next;
+  $('mStory').classList.toggle('on', next === 'story');
+  $('mCity').classList.toggle('on', next === 'city');
+  STORY_EL.forEach((id) => $(id).classList.toggle('hidden', next !== 'story'));
+  CITY_EL.forEach((id) => $(id).classList.toggle('hidden', next !== 'city'));
+
+  if (next === 'city') {
+    clearTimers(); storyBusy = false; storyQueue = []; storyLayer.clearLayers();
+    send({ type: 'rate', value: +$('rate').value });   /* keep slider and engine in step */
+    send({ type: 'run', value: running });
+    map.fitBounds(bounds || [[0,0],[1,1]], { padding: [30,30] });
+  } else {
+    send({ type: 'run', value: false });
+    routeLayer.clearLayers(); unitLayer.clearLayers(); missions.clear();
+    storyOn = true; $('sPlay').textContent = 'pause';
+    nextCase();
+  }
+  applyZoom();
+}
+$('mStory').onclick = () => setMode('story');
+$('mCity').onclick  = () => setMode('city');
+
+$('sPlay').onclick = () => {
+  storyOn = !storyOn;
+  $('sPlay').textContent = storyOn ? 'pause' : 'resume';
+  $('sPlay').classList.toggle('primary', storyOn);
+  if (storyOn && !storyBusy) nextCase();
+};
+$('sNext').onclick = () => { clearTimers(); storyBusy = false; storyQueue = []; nextCase(); };
+
+/* ---------- city controls ---------- */
 let running = false;
 $('run').onclick = () => {
   running = !running;
@@ -432,10 +723,10 @@ $('surge').onclick   = () => send({ type: 'surge', value: 60 });
 $('close').onclick   = () => send({ type: 'close', value: 2000 });
 $('reopen').onclick  = () => send({ type: 'reopen' });
 $('rebuild').onclick = () => send({ type: 'rebuild' });
-$('fit').onclick     = () => bounds && map.fitBounds(bounds, { padding: [30, 30] });
 $('restock').onclick = () => send({ type: 'restock' });
 $('night').onclick   = () => send({ type: 'clock', value: 3 * 3600000 });
 $('day').onclick     = () => send({ type: 'clock', value: 10 * 3600000 });
+$('fit').onclick     = () => bounds && map.fitBounds(bounds, { padding: [30,30] });
 </script>
 </body>
 </html>
