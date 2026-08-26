@@ -514,9 +514,9 @@
 
   <p>
     The trade is real and worth stating: C gives no memory safety, so the discipline
-    has to come from testing instead — which is why the suite is 34 assertions run on
-    every build, and why every fast path is cross-checked against an exhaustive
-    method.
+    has to come from testing instead — which is why the suite is 130 assertions across
+    two levels, 86 of them run on every image build, and why every fast path is
+    cross-checked against an exhaustive method.
   </p>
 </section>
 
@@ -646,15 +646,17 @@
 
   <h3>Correctness testing</h3>
   <p>
-    <code>./tests</code> — <b>34 assertions in 0.78 seconds</b>, and the build exits
-    non-zero if any of them fails.
+    <code>./tests</code> — <b>86 assertions in 0.91 seconds</b>, and the build exits
+    non-zero if any of them fails. A second suite, <code>make test-protocol</code>,
+    adds <b>44 more</b> over a TCP socket against a live daemon.
   </p>
 
   <h3>Reproducing all of it</h3>
-  <pre>make            <span style="color:#5d7186"># build</span>
-./tests         <span style="color:#5d7186"># 34 correctness checks</span>
-./bench         <span style="color:#5d7186"># every number on this page</span>
-./bench --quick <span style="color:#5d7186"># a faster subset</span></pre>
+  <pre>make               <span style="color:#5d7186"># build</span>
+./tests            <span style="color:#5d7186"># 86 correctness checks</span>
+make test-protocol <span style="color:#5d7186"># 44 more, over the socket</span>
+./bench            <span style="color:#5d7186"># every number on this page</span>
+./bench --quick    <span style="color:#5d7186"># a faster subset</span></pre>
   <p style="color:var(--dim);font-size:13.5px">Same seed, same numbers, any machine.</p>
 
   <div class="warn">

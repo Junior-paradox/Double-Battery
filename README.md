@@ -782,7 +782,7 @@ Six single-line mutations have since been injected and each was caught by the ri
 | Document | What's inside |
 |---|---|
 | 🧮 **[docs/ALGORITHM.md](docs/ALGORITHM.md)** | Problem model, objective function, why the decomposition is *exact*, pseudocode for each search, correctness proofs, complexity derivations, the three hospital-side designs and why two were rejected, alternatives considered |
-| 🧪 **[docs/TESTING.md](docs/TESTING.md)** | 105 named test cases with IDs, six testing techniques and what each catches, mutation-testing evidence, requirement→test traceability matrix, known gaps |
+| 🧪 **[docs/TESTING.md](docs/TESTING.md)** | 130 named test cases with IDs, six testing techniques and what each catches, mutation-testing evidence, requirement→test traceability matrix, known gaps |
 
 ### 📄 Prior work this builds on
 
