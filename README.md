@@ -1,6 +1,6 @@
-# Emergency Dispatch Engine — speed demo
+# HealthWay
 
-A from-scratch C engine for dynamic ambulance dispatch, plus a benchmark
+Emergency dispatch engine — speed demo. A from-scratch C engine for dynamic ambulance dispatch, plus a benchmark
 harness that measures latency, throughput, memory and complexity growth.
 
 ```
