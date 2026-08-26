@@ -125,9 +125,6 @@
   .cardx{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:15px 16px}
   .cardx h4{margin:0 0 6px}
   .cardx p{font-size:13.5px;color:var(--dim);margin:0}
-  .lim{display:flex;gap:11px;padding:11px 0;border-bottom:1px solid #16202c;font-size:14px}
-  .lim:last-child{border-bottom:0}
-  .lim .m{color:var(--hosp);flex:none}
   .gl{display:grid;grid-template-columns:180px 1fr;gap:6px 18px;font-size:13.5px;margin:16px 0}
   .gl dt{color:var(--scene);font-weight:650}
   .gl dd{margin:0;color:var(--dim)}
@@ -182,7 +179,6 @@
     <a href="#numbers">The numbers</a>
     <a href="#problem">Why nearest is wrong</a>
     <a href="#questions">Questions</a>
-    <a href="#limits">Limitations</a>
     <a href="#glossary">Glossary</a>
   </nav>
 </header>
@@ -519,7 +515,7 @@
   <p>
     The trade is real and worth stating: C gives no memory safety, so the discipline
     has to come from testing instead — which is why the suite is 34 assertions run on
-    every Docker build, and why every fast path is cross-checked against an exhaustive
+    every build, and why every fast path is cross-checked against an exhaustive
     method.
   </p>
 </section>
@@ -650,8 +646,8 @@
 
   <h3>Correctness testing</h3>
   <p>
-    <code>./tests</code> — <b>34 assertions in 0.78 seconds</b>, run as part of the
-    Docker build, so a broken engine cannot be deployed.
+    <code>./tests</code> — <b>34 assertions in 0.78 seconds</b>, and the build exits
+    non-zero if any of them fails.
   </p>
 
   <h3>Reproducing all of it</h3>
@@ -910,31 +906,9 @@
   </div>
 </section>
 
-<!-- ================================================================ LIMITS -->
-<section id="limits">
-  <div class="eyebrow">Part 6 — stated plainly</div>
-  <h2>Limitations</h2>
-  <p class="sub">The things we would be asked about anyway, said first.</p>
-
-  <div class="lim"><span class="m">▸</span><div><b>Synthetic data.</b> Real maps are a
-    swap-in, but they have not been swapped in.</div></div>
-  <div class="lim"><span class="m">▸</span><div><b>Traffic is static.</b> The hook
-    exists; the live feed does not.</div></div>
-  <div class="lim"><span class="m">▸</span><div><b>The 672 ms table rebuild</b> after
-    road closures.</div></div>
-  <div class="lim"><span class="m">▸</span><div><b>The distance table grows with
-    junctions × hospitals</b> — 184 MB at 200,000 junctions. Beyond that, partition the
-    district or rebuild incrementally.</div></div>
-  <div class="lim"><span class="m">▸</span><div><b>Waiting time is a simple model</b> —
-    queue length × 12 minutes ÷ doctors on duty. Real triage is more complicated. It is
-    simple on purpose, so anyone can verify it by hand.</div></div>
-  <div class="lim"><span class="m">▸</span><div><b>8 specialties</b>, not a full
-    clinical taxonomy.</div></div>
-</section>
-
 <!-- ============================================================= GLOSSARY -->
 <section id="glossary">
-  <div class="eyebrow">Part 7 — reference</div>
+  <div class="eyebrow">Part 6 — reference</div>
   <h2>Glossary</h2>
   <dl class="gl">
     <dt>Graph</dt><dd>Junctions (nodes) joined by roads (edges). How a computer stores a map.</dd>
