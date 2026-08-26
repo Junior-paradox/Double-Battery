@@ -299,7 +299,11 @@ let fleetDots = new Map(), hospMark = new Map(), hospInfo = new Map(), bounds = 
 const LOCAL_ZOOM = 0.5;
 
 /* ============================ socket ============================ */
-const ws = new WebSocket(`ws://${location.host}`);
+/* wss:// when the page itself is served over https -- a plain ws:// socket
+   from an https page is blocked as mixed content by every browser, which is
+   exactly what happens behind Render's / Fly's TLS terminator. */
+const WS_SCHEME = location.protocol === 'https:' ? 'wss' : 'ws';
+const ws = new WebSocket(`${WS_SCHEME}://${location.host}`);
 const send = (o) => ws.readyState === 1 && ws.send(JSON.stringify(o));
 ws.onmessage = (ev) => {
   const m = JSON.parse(ev.data);
@@ -308,7 +312,21 @@ ws.onmessage = (ev) => {
               log: (x) => logLine(x.text, x.level) }[m.type];
   if (h) { try { h(m); } catch (e) { console.error('handler', m.type, e); } }
 };
-ws.onclose = () => logLine('connection to the dispatch bridge lost', 'bad');
+ws.onclose = () => { logLine('connection to the dispatch bridge lost', 'bad');
+                     bootFail('lost the connection to the dispatch bridge'); };
+ws.onerror = () => bootFail('could not reach the dispatch bridge');
+
+/* The boot overlay is only ever removed by onRoads(). Without this, any
+   failure to connect leaves it showing "starting…" forever, which reads as a
+   slow load rather than a broken one. */
+function bootFail(why) {
+  const boot = document.getElementById('boot');
+  if (!boot) return;                      /* already booted, nothing to say */
+  boot.textContent = why + ' — check the browser console and the server log';
+}
+setTimeout(() => {
+  if (ws.readyState !== 1) bootFail('the dispatch bridge is not responding');
+}, 15000);
 
 function onInit(m) {
   staticLayer.clearLayers(); hospMark.clear(); fleetDots.clear(); hospInfo.clear();

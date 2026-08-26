@@ -3,3 +3,4 @@ server
 *.o
 *.d
 tests
+temp/
