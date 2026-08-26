@@ -1,0 +1,14 @@
+# One-click blueprint: New > Blueprint in the Render dashboard, point it at
+# this repo, and it reads this file. Free plan, built from the Dockerfile.
+services:
+  - type: web
+    name: healthway
+    runtime: docker
+    plan: free
+    region: singapore          # closest free region to India
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: 8080

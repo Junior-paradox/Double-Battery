@@ -376,23 +376,31 @@ The suite is verified to fail: removing the medicine check from
 
 ## Deploying
 
-A C daemon plus a raw-socket Node bridge will not run on a static or
-serverless host. It needs one container, which Fly.io, Render and Railway all
-accept as a plain Dockerfile:
+A C daemon plus a raw-socket Node bridge cannot run on a static or serverless
+host. It needs one container — which Render, Google Cloud Run, Fly.io and
+Railway all accept as a plain Dockerfile.
 
-```
-fly launch --no-deploy && fly deploy      # fly.toml is included
-```
+**Render free plan**, using the included `render.yaml`:
+
+1. push this repo to GitHub
+2. Render dashboard → **New → Blueprint** → pick the repo
+3. it reads `render.yaml`, builds the Dockerfile, and gives you a URL
+
+The free plan is 512 MB RAM and 0.1 CPU, and **spins down after 15 minutes
+without traffic**, taking about a minute to wake. The monthly allowance is 750
+instance-hours — and a calendar month is 744 hours, so one service kept awake
+fits inside the free tier exactly. Point any free uptime pinger at the URL
+every 10 minutes and it never sleeps.
 
 The image is two stages: the first compiles the engine with portable flags and
-**runs the test suite as a build step**, so a failing test fails the build. The
+**runs the test suite as a build step**, so a failing test fails the deploy. The
 second carries just the binary, `web/`, and Node. `docker-start.sh` starts the
 engine, polls until it accepts connections, then `exec`s the bridge so the
-container's lifetime tracks the web process. The bridge honours `$PORT`, which
-is what those platforms set.
+container's lifetime tracks the web process. The bridge honours `$PORT`.
 
-Resident footprint is about 18 MB for the engine plus Node, so the smallest
-instance on any of them is enough.
+Resident footprint is ~18 MB for the engine plus Node, so the smallest instance
+anywhere is enough. On 0.1 CPU the one-time distance-table build takes a few
+seconds instead of 680 ms; queries are unaffected.
 
 ## Edge cases
 
