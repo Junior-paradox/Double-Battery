@@ -159,14 +159,16 @@
   .lhead .lw{margin-left:2px}
   .lhead .chev{margin-left:2px;font-size:9px;transition:transform .2s}
   .legend:hover .chev,.legend:focus-within .chev{transform:rotate(90deg)}
-  /* Collapsed by default; grid-template-rows animates from nothing to auto
-     without having to guess a max-height that later content might exceed. */
-  .lbody{display:grid;grid-template-rows:0fr;opacity:0;padding:0 13px;
-    transition:grid-template-rows .22s ease,opacity .18s ease,padding .22s ease}
-  .lbody > div{overflow:hidden}
-  .legend:hover .lbody,.legend:focus-within .lbody{grid-template-rows:1fr;opacity:1;
-    padding-bottom:10px}
-  .legend .lbody > div{display:flex;align-items:center;gap:9px;padding:2.5px 0;
+  /* Collapsed by default. grid-template-rows animates from nothing to auto
+     without having to guess a max-height, but it only sizes the tracks it is
+     given -- so the rows live in ONE wrapper. Listed directly, all but the
+     first would fall into implicit auto rows and stay fully expanded. */
+  .lbody{display:grid;grid-template-rows:0fr;opacity:0;
+    transition:grid-template-rows .22s ease,opacity .18s ease}
+  .linner{overflow:hidden;min-height:0;padding:0 13px}
+  .legend:hover .lbody,.legend:focus-within .lbody{grid-template-rows:1fr;opacity:1}
+  .legend:hover .linner,.legend:focus-within .linner{padding-bottom:10px}
+  .legend .linner > div{display:flex;align-items:center;gap:9px;padding:2.5px 0;
     color:var(--dim);font-size:11px}
   .sw{width:18px;height:3px;border-radius:2px;flex:none}
   .hosp{display:flex;align-items:center;justify-content:center;border-radius:5px;
@@ -302,7 +304,7 @@
     <span class="sw" style="background:#f0b429;height:3px;width:11px"></span>
     <span class="lw">legend</span><span class="chev">▸</span>
   </div>
-  <div class="lbody">
+  <div class="lbody"><div class="linner">
   <div><span class="sw" style="background:#3b9dff;height:4px"></span> ambulance → patient</div>
   <div><span class="sw" style="background:#f0b429;height:4px"></span> patient → hospital</div>
   <div><span class="dot" style="background:#f85149;margin:0;border-radius:2px;width:9px;height:9px"></span> hospital</div>
@@ -312,7 +314,7 @@
     <span class="sw" style="background:#3f5f86;height:3px"></span> highway</div>
   <div><span class="sw" style="background:#28405c;height:2px"></span> main road</div>
   <div><span class="sw" style="background:#16212e;height:1.5px"></span> local street</div>
-  </div>
+  </div></div>
 </div>
 
 <div id="why" class="panel hidden">
