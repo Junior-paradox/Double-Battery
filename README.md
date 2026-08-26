@@ -21,10 +21,11 @@ seed, so every run produces the identical graph, fleet and request stream.
 | Resource depletion + urgency preemption | `src/depq.h`, bench §6 |
 | No-route fallback | `Decision.ok == 0` |
 | Concurrency | bench §7 |
+| Resident daemon + wire protocol | `src/server.c` |
+| Route geometry for map display | `search_path()` |
 
-Not yet built: HTTP/WebSocket layer, map UI, multi-stop route optimisation
-(HGS/ALNS). This is the routing + assignment core only, which is where the
-latency budget actually goes.
+Not yet built: HTTP/WebSocket bridge, map UI, multi-stop route optimisation
+(HGS/ALNS).
 
 ## Data model
 
@@ -157,6 +158,55 @@ graph is read-shared with zero locks; each thread owns a private workspace.
 entries, urgency ordering verified. Pop-min = most urgent oldest-first
 (dispatch); pop-max = least urgent newest (shed / defer under overload).
 
+## Running as a service
+
+```
+make serve          # or: ./server 9090
+```
+
+The engine is a **resident daemon**, not a per-request process and not a
+shared library. A query costs ~47 us; process spawn costs 1-5 ms and would
+rebuild ~100 ms of graph and index state to do it, so the process boundary is
+crossed once at startup. A `.so` would also keep state hot, but it welds the
+engine to the web server's lifetime -- one segfault takes down both -- and
+gives up the engine's own thread scaling. A daemon keeps state resident,
+isolates crashes, and is callable from any backend language.
+
+One plain-text command per line in, one JSON object per line out:
+
+```
+DISPATCH <node> <need_hosp> <need_amb> <urgency> <sla_ms> <horizon> <geom>
+COMMIT <amb> <hosp>       RELEASE <amb>
+CLOSE <edge>              OPEN <edge>         REBUILD
+NODE <village>            STATS               QUIT
+```
+
+`geom=1` additionally returns `leg1` (ambulance to incident, free from the
+backward search's parent pointers) and `leg2` (incident to hospital, a
+targeted A* since the index answers without ever walking the road) as
+coordinate arrays ready to draw.
+
+Startup: **102.8 ms**, **9.18 MB resident** for the whole 50k-node service.
+
+**Measured over TCP, end to end, including JSON**
+
+| clients | pipeline | req/s | µs/req |
+|---|---|---|---|
+| 1 | 1 | 3,645 | 274.4 |
+| 1 | 32 | 12,195 | 82.0 |
+| 2 | 32 | 27,439 | 36.4 |
+| 4 | 32 | 39,444 | 25.4 |
+| 8 | 32 | 42,616 | 23.5 |
+
+**42,616 dispatches/sec end to end.** The first row is the important one for
+whoever writes the backend: a single un-pipelined client gets 3,645 req/s and
+is bound by round-trip latency, not by the engine. Pipelining alone is 3.3x
+before any extra cores are involved, so the Node bridge should batch rather
+than issue one blocking call per emergency.
+
+Writers (`CLOSE`, `COMMIT`, `REBUILD`) take an exclusive lock; dispatches take
+a shared one and run concurrently.
+
 ## Honest gaps
 
 - Section 6's horizon dispatches 1429 vs 1463 requests without it — it refuses
@@ -174,3 +224,7 @@ entries, urgency ordering verified. Pop-min = most urgent oldest-first
   territory) is not implemented.
 - The concurrency benchmark is read-only. Contention on fleet/bed state under
   real concurrent mutation is unmeasured.
+- `CLOSE` marks the hospital index stale but does not rebuild it; the caller
+  must issue `REBUILD` (~95 ms). Dirty-region invalidation would be cheaper.
+- The daemon has no auth, no rate limiting and binds to loopback only. It is a
+  demo service, not an exposed one.
