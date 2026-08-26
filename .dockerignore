@@ -1,0 +1,10 @@
+.git
+.gitignore
+bench
+server
+tests
+src/*.o
+src/*.d
+README.md
+Dockerfile
+.dockerignore
