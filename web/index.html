@@ -9,7 +9,7 @@
   :root{
     --bg:#070a0f; --panel:#0f1620; --line:#1e2a38; --ink:#e8eef6; --dim:#8296ad;
     --ok:#3fb950; --warn:#d29922; --bad:#f85149; --scene:#3b9dff; --hosp:#f0b429;
-    --strip:64px;
+    --strip:64px; --storyctl:60px;
   }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);overflow:hidden;
@@ -25,16 +25,38 @@
     background:#0b111a;border-bottom:1px solid var(--line)}
   #brand{font-size:16px;font-weight:700;letter-spacing:.2px;margin-right:6px;white-space:nowrap}
   #brand small{display:block;font-size:10px;color:var(--dim);font-weight:400;letter-spacing:.2px}
-  .steps{display:flex;align-items:center;gap:2px;flex:1;overflow:hidden;margin:0 14px}
-  .step{display:flex;align-items:center;gap:7px;padding:5px 9px;white-space:nowrap;
-    color:var(--dim);font-size:11.5px}
-  .step b{color:var(--ink);font-weight:600}
-  .step .ic{font-size:15px}
-  .arr{color:#2b3b4f;font-size:13px}
+  #nav{display:flex;align-items:center;gap:1px;flex:1;overflow:hidden;margin:0 12px}
+  #nav a{padding:6px 11px;border-radius:7px;color:var(--dim);text-decoration:none;
+    font-size:12px;font-weight:600;white-space:nowrap}
+  #nav a:hover{color:var(--ink);background:#131c28}
   .modes{display:flex;gap:0;border:1px solid var(--line);border-radius:8px;overflow:hidden;flex:none}
   .modes button{padding:7px 13px;border:0;background:#131c28;color:var(--dim);
     font-size:12px;cursor:pointer;font-weight:600}
   .modes button.on{background:var(--scene);color:#04101f}
+  /* Shown only when #nav is too wide to fit, so there is always a way through
+     to the explainer. */
+  #docs{display:none;flex:none;margin-left:10px;padding:7px 12px;border:1px solid var(--line);
+    border-radius:8px;background:#131c28;color:var(--dim);font-size:12px;
+    font-weight:600;text-decoration:none;white-space:nowrap}
+  #docs:hover{color:var(--ink);border-color:#31445c}
+  /* The strip is a row of items that refuse to shrink, and #docs is last --
+     so on a narrow window it is the one pushed off the edge and clipped.
+     The step captions are the only expendable part, and the explainer page
+     they point at says the same thing at length. */
+  @media (max-width:820px){
+    #strip{padding:0 10px}
+    #nav{display:none}
+    .modes{margin-left:auto}
+    #docs{display:inline-block;padding:7px 10px;font-size:11.5px}
+    .modes button{padding:7px 10px;font-size:11.5px}
+  }
+  .modes .sm{display:none}
+  @media (max-width:430px){
+    #brand{font-size:14px} #brand small{display:none}
+    .modes button{padding:6px 9px} #docs{padding:6px 9px}
+    /* Short labels here rather than a clipped "how it works" link. */
+    .modes .lg{display:none} .modes .sm{display:inline}
+  }
 
   /* ---------- shared ---------- */
   h2{margin:15px 0 7px;font-size:10px;text-transform:uppercase;letter-spacing:1px;
@@ -57,8 +79,13 @@
   .u1{background:#16232f;color:#9fb3c8}.u0{background:#16232f;color:#8296ad}
 
   /* ---------- STORY MODE ---------- */
-  #story{position:absolute;top:calc(var(--strip) + 18px);left:18px;width:430px;
-    max-height:calc(100vh - var(--strip) - 36px);overflow:auto;padding:18px 20px;z-index:700}
+  /* The height budget has to subtract #storyctl as well as the margins --
+     with only the margins removed the panel grew until it ran underneath the
+     control bar and the verdict rows disappeared behind it. */
+  #story{position:absolute;top:calc(var(--strip) + 18px);left:18px;
+    width:min(430px,calc(100vw - 36px));
+    max-height:calc(100vh - var(--strip) - var(--storyctl) - 50px);
+    overflow:auto;padding:18px 20px;z-index:700}
   #story .head{display:flex;align-items:center;gap:9px;margin-bottom:3px}
   #story .case{font-size:20px;font-weight:700;letter-spacing:-.2px}
   #story .where{color:var(--dim);font-size:12.5px;margin-bottom:15px}
@@ -84,19 +111,26 @@
   .speedchip{margin-top:11px;padding:8px 11px;background:#0d1520;border:1px solid var(--line);
     border-radius:8px;font-size:11.5px;color:var(--dim);text-align:center}
   .speedchip b{color:var(--scene);font-variant-numeric:tabular-nums}
-  #storyctl{position:absolute;bottom:18px;left:18px;width:430px;padding:11px 14px;z-index:700;
-    display:flex;gap:9px;align-items:center}
+  #storyctl{position:absolute;bottom:18px;left:18px;width:min(430px,calc(100vw - 36px));
+    padding:11px 14px;z-index:700;display:flex;gap:9px;align-items:center}
   #storyctl button{flex:1;margin:0}
   #storyctl .cnt{color:var(--dim);font-size:11px;white-space:nowrap}
 
   /* ---------- CITY MODE ---------- */
-  #hud{position:absolute;top:calc(var(--strip) + 14px);left:14px;width:288px;
-    padding:15px 17px;z-index:700}
-  #log{position:absolute;bottom:14px;left:14px;width:288px;max-height:32vh;
-    padding:9px 13px;overflow:auto;z-index:700}
-  #ctl{position:absolute;top:calc(var(--strip) + 14px);right:14px;width:248px;
-    padding:15px 17px;z-index:700}
-  #why{position:absolute;bottom:14px;right:14px;width:360px;padding:14px 16px;z-index:700}
+  /* One rail per side, bounded top and bottom by the viewport. Panels are
+     flex items, so a tall one shrinks and scrolls inside itself rather than
+     running underneath its neighbour. Rails are capped at half the viewport
+     so the two sides can never meet on a narrow window either. */
+  #railL,#railR{position:absolute;top:calc(var(--strip) + 14px);bottom:14px;z-index:700;
+    display:flex;flex-direction:column;gap:12px;pointer-events:none}
+  #railL{left:14px;align-items:flex-start;width:min(288px,calc(50vw - 21px))}
+  #railR{right:14px;align-items:flex-end;width:min(360px,calc(50vw - 21px))}
+  /* The rails themselves must not swallow map drags -- only their panels. */
+  #railL > *,#railR > *{pointer-events:auto;max-width:100%}
+  #hud{width:288px;padding:15px 17px;flex:0 1 auto;min-height:0;overflow:auto}
+  #log{width:288px;max-height:32vh;padding:9px 13px;overflow:auto;flex:none;margin-top:auto}
+  #ctl{width:248px;padding:15px 17px;flex:0 1 auto;min-height:0;overflow:auto}
+  #why{width:360px;padding:14px 16px;flex:none}
   .clock{color:var(--dim);font-size:11.5px;margin:-4px 0 12px}
   .clock b{color:var(--ink);font-variant-numeric:tabular-nums}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px}
@@ -117,8 +151,23 @@
   .wrow.rej{color:#8296ad}
 
   /* ---------- map furniture ---------- */
-  .legend{position:absolute;bottom:14px;right:14px;z-index:700;padding:11px 13px}
-  .legend div{display:flex;align-items:center;gap:9px;padding:2.5px 0;color:var(--dim);font-size:11px}
+  .legend{padding:0;flex:none;margin-top:auto;overflow:hidden;outline:none;
+    transition:border-color .18s}
+  .legend:hover,.legend:focus-visible{border-color:#31445c}
+  .lhead{display:flex;align-items:center;gap:6px;padding:8px 12px;color:var(--dim);
+    font-size:11px;font-weight:600;white-space:nowrap;cursor:default}
+  .lhead .lw{margin-left:2px}
+  .lhead .chev{margin-left:2px;font-size:9px;transition:transform .2s}
+  .legend:hover .chev,.legend:focus-within .chev{transform:rotate(90deg)}
+  /* Collapsed by default; grid-template-rows animates from nothing to auto
+     without having to guess a max-height that later content might exceed. */
+  .lbody{display:grid;grid-template-rows:0fr;opacity:0;padding:0 13px;
+    transition:grid-template-rows .22s ease,opacity .18s ease,padding .22s ease}
+  .lbody > div{overflow:hidden}
+  .legend:hover .lbody,.legend:focus-within .lbody{grid-template-rows:1fr;opacity:1;
+    padding-bottom:10px}
+  .legend .lbody > div{display:flex;align-items:center;gap:9px;padding:2.5px 0;
+    color:var(--dim);font-size:11px}
   .sw{width:18px;height:3px;border-radius:2px;flex:none}
   .hosp{display:flex;align-items:center;justify-content:center;border-radius:5px;
     background:#f85149;color:#fff;font-weight:800;border:1.5px solid #ff9d96;
@@ -135,29 +184,33 @@
   .maplabel.rej b{color:#ff9d96;font-weight:600}
   .zoomhint{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);z-index:700;
     padding:6px 12px;font-size:11px;color:var(--dim)}
+  /* Leaflet's zoom control lives bottom-left -- the same corner as the story
+     control bar and the city log -- and its own stacking context draws it on
+     top of them. Lift it clear of whichever one is on screen. */
+  .leaflet-bottom.leaflet-left{transition:bottom .2s ease}
+  body.m-story .leaflet-bottom.leaflet-left{bottom:86px}
+  body.m-city .leaflet-bottom.leaflet-left{bottom:calc(32vh + 24px)}
   #boot{position:absolute;inset:var(--strip) 0 0 0;z-index:900;display:flex;
     align-items:center;justify-content:center;background:#070a0f;color:var(--dim);
     transition:opacity .4s}
   .hidden{display:none !important}
 </style>
 </head>
-<body>
+<body class="m-story">
 
 <div id="strip">
   <div id="brand">HealthWay<small>rural emergency dispatch</small></div>
-  <div class="steps">
-    <div class="step"><span class="ic">🚑</span><span>finds the <b>nearest ambulance that can help</b></span></div>
-    <span class="arr">→</span>
-    <div class="step"><span class="ic">🏥</span><span>picks a hospital with the <b>right specialist, a bed and the medicine</b></span></div>
-    <span class="arr">→</span>
-    <div class="step"><span class="ic">🚧</span><span>routes <b>around closed roads</b></span></div>
-    <span class="arr">→</span>
-    <div class="step"><span class="ic">⏱</span><span>chooses by <b>total time, including the ER queue</b></span></div>
-  </div>
+  <nav id="nav">
+    <a href="explain.html#algorithm">The algorithm</a>
+    <a href="explain.html#why-c">Why C</a>
+    <a href="explain.html#numbers">The numbers</a>
+    <a href="explain.html#questions">Questions</a>
+  </nav>
   <div class="modes">
-    <button id="mStory" class="on">Watch one case</button>
-    <button id="mCity">Full city view</button>
+    <button id="mStory" class="on"><span class="lg">Watch one case</span><span class="sm">Story</span></button>
+    <button id="mCity"><span class="lg">Full city view</span><span class="sm">City</span></button>
   </div>
+  <a id="docs" href="explain.html">how it works</a>
 </div>
 
 <div id="map"></div>
@@ -185,6 +238,12 @@
 </div>
 
 <!-- ============ CITY MODE ============ -->
+<!-- Two rails, each a flex column bounded by the viewport. These panels used
+     to be absolutely positioned individually, which put #ctl, #legend and
+     #why in the same bottom-right corner -- they overlapped whenever the
+     window was short. Stacked in a column they push each other instead. -->
+<div id="railL">
+
 <div id="hud" class="panel hidden">
   <div class="clock">simulated time <b id="clock">10:00</b></div>
   <div class="grid2">
@@ -210,6 +269,12 @@
   <div class="row"><span>hospitals checked / call</span><span id="considered">—</span></div>
 </div>
 
+<div id="log" class="panel hidden"></div>
+
+</div>
+
+<div id="railR">
+
 <div id="ctl" class="panel hidden">
   <h2 style="margin-top:0">simulation</h2>
   <button id="run" class="act primary">start</button>
@@ -229,14 +294,15 @@
   <button id="fit" class="act">reset map</button>
 </div>
 
-<div id="why" class="panel hidden">
-  <h2 style="margin-top:0">why this hospital</h2>
-  <div id="whybody" style="color:var(--dim);font-size:11.5px">waiting for the first dispatch…</div>
-</div>
-
-<div id="log" class="panel hidden"></div>
-
-<div id="legend" class="panel legend hidden">
+<!-- Collapsed to a chip by default so it costs almost no map. tabindex makes
+     it reachable by keyboard and by tap, where :hover never fires. -->
+<div id="legend" class="panel legend" tabindex="0">
+  <div class="lhead">
+    <span class="sw" style="background:#3b9dff;height:3px;width:11px"></span>
+    <span class="sw" style="background:#f0b429;height:3px;width:11px"></span>
+    <span class="lw">legend</span><span class="chev">▸</span>
+  </div>
+  <div class="lbody">
   <div><span class="sw" style="background:#3b9dff;height:4px"></span> ambulance → patient</div>
   <div><span class="sw" style="background:#f0b429;height:4px"></span> patient → hospital</div>
   <div><span class="dot" style="background:#f85149;margin:0;border-radius:2px;width:9px;height:9px"></span> hospital</div>
@@ -246,6 +312,14 @@
     <span class="sw" style="background:#3f5f86;height:3px"></span> highway</div>
   <div><span class="sw" style="background:#28405c;height:2px"></span> main road</div>
   <div><span class="sw" style="background:#16212e;height:1.5px"></span> local street</div>
+  </div>
+</div>
+
+<div id="why" class="panel hidden">
+  <h2 style="margin-top:0">why this hospital</h2>
+  <div id="whybody" style="color:var(--dim);font-size:11.5px">waiting for the first dispatch…</div>
+</div>
+
 </div>
 
 <div id="zoomhint" class="panel zoomhint hidden">zoom in to see local streets</div>
@@ -282,8 +356,13 @@ function polyKm(pts) {           /* pts are engine metres */
 const S = 100;
 const P = (c) => [c[1] / S, c[0] / S];
 
-const map = L.map('map', { crs: L.CRS.Simple, minZoom: -4, maxZoom: 4,
-  zoomControl: false, attributionControl: false, preferCanvas: true, zoomSnap: .5 });
+/* The old -4..4 range was arbitrary and you hit the ceiling while still well
+   above street level. Nothing here is tile-backed -- it is vector data drawn
+   on a canvas -- so there is no tile pyramid to run out of, and the limits
+   exist only to stop the view running away entirely. */
+const map = L.map('map', { crs: L.CRS.Simple, minZoom: -7, maxZoom: 12,
+  zoomControl: false, attributionControl: false, preferCanvas: true, zoomSnap: .5,
+  wheelPxPerZoomLevel: 90 });
 L.control.zoom({ position: 'bottomleft' }).addTo(map);
 
 const roadCanvas = L.canvas({ padding: .4 });
@@ -394,7 +473,20 @@ function at(pts, meta, f) {
   const t = (want - meta.acc[i-1]) / seg;
   return [pts[i-1][0] + (pts[i][0]-pts[i-1][0])*t, pts[i-1][1] + (pts[i][1]-pts[i-1][1])*t];
 }
+/* Pausing has to stop the vehicles on screen as well, or the city plainly
+   looks like it is still running. Holding the clock and shifting every
+   mission's start time on resume keeps the animation continuous instead of
+   making the dots jump forward by however long the pause lasted. */
+let animFrozen = false, animAt = 0;
+function setFrozen(on) {
+  if (on === animFrozen) return;
+  animFrozen = on;
+  if (on) { animAt = performance.now(); return; }
+  const d = performance.now() - animAt;
+  for (const s of missions.values()) s.t0 += d;
+}
 function tick(now) {
+  if (animFrozen) { requestAnimationFrame(tick); return; }
   for (const s of missions.values()) {
     const f = Math.min(1, (now - s.t0) / s.dur);
     let pos;
@@ -508,8 +600,38 @@ function onFailed(m) {
 let mode = 'story', storyQueue = [], storyBusy = false, storyOn = true, shown = 0;
 let storyTimers = [];
 
-function clearTimers() { storyTimers.forEach(clearTimeout); storyTimers = []; }
-function later(fn, ms) { storyTimers.push(setTimeout(fn, ms)); }
+/* A case is scheduled all at once as a series of delayed beats, so "pause"
+   cannot just stop asking for new cases -- the beats already queued would
+   keep firing and the story would carry on playing. Each pending beat is
+   frozen with the time it had left and re-armed on resume; clearing them
+   instead would drop the rest of the case on the floor. */
+function clearTimers() { storyTimers.forEach((t) => clearTimeout(t.id)); storyTimers = []; }
+function later(fn, ms) {
+  const t = { fn, left: ms, id: 0, at: 0 };
+  if (storyOn) { t.at = Date.now(); t.id = setTimeout(() => { t.left = -1; fn(); }, ms); }
+  storyTimers.push(t);
+}
+function freezeTimers() {
+  const now = Date.now();
+  for (const t of storyTimers) {
+    if (t.left < 0 || !t.id) continue;          /* already fired, or frozen */
+    clearTimeout(t.id); t.id = 0;
+    t.left = Math.max(0, t.left - (now - t.at));
+  }
+}
+function thawTimers() {
+  for (const t of storyTimers) {
+    if (t.left < 0 || t.id) continue;           /* already fired, or running */
+    t.at = Date.now();
+    t.id = setTimeout(() => { t.left = -1; t.fn(); }, t.left);
+  }
+}
+function setPlaying(on) {
+  storyOn = on;
+  $('sPlay').textContent = on ? 'pause' : 'resume';
+  $('sPlay').classList.toggle('primary', on);
+  if (on) thawTimers(); else freezeTimers();
+}
 
 function beat(mark, title, sub, cls) {
   const d = document.createElement('div');
@@ -619,7 +741,7 @@ function playCase(m) {
 }
 
 function finishCase(ms) {
-  later(() => { storyBusy = false; if (storyOn) nextCase(); else pumpStory(); }, ms);
+  later(() => { storyBusy = false; if (storyOn) nextCase(); }, ms);
 }
 function drawLeg(coords, color, dashed) {
   if (!coords || coords.length < 2) return;
@@ -694,9 +816,13 @@ function logLine(html, level) {
 
 /* ============================ modes ============================ */
 const STORY_EL = ['story','storyctl'];
-const CITY_EL  = ['hud','ctl','why','log','legend'];
+/* The legend stays up in both modes -- it explains the map itself, and the
+   map is on screen either way. It is collapsed to a chip until hovered. */
+const CITY_EL  = ['hud','ctl','why','log'];
 function setMode(next) {
   mode = next;
+  document.body.classList.toggle('m-story', next === 'story');
+  document.body.classList.toggle('m-city',  next === 'city');
   $('mStory').classList.toggle('on', next === 'story');
   $('mCity').classList.toggle('on', next === 'city');
   STORY_EL.forEach((id) => $(id).classList.toggle('hidden', next !== 'story'));
@@ -706,11 +832,17 @@ function setMode(next) {
     clearTimers(); storyBusy = false; storyQueue = []; storyLayer.clearLayers();
     send({ type: 'rate', value: +$('rate').value });   /* keep slider and engine in step */
     send({ type: 'run', value: running });
+    send({ type: 'freeze', value: !running });
+    setFrozen(!running);
     map.fitBounds(bounds || [[0,0],[1,1]], { padding: [30,30] });
   } else {
     send({ type: 'run', value: false });
+    /* Story mode also runs with running=false, but must never be frozen --
+       otherwise its ambulances are never released. */
+    send({ type: 'freeze', value: false });
+    setFrozen(false);
     routeLayer.clearLayers(); unitLayer.clearLayers(); missions.clear();
-    storyOn = true; $('sPlay').textContent = 'pause';
+    clearTimers(); setPlaying(true);
     nextCase();
   }
   applyZoom();
@@ -719,12 +851,16 @@ $('mStory').onclick = () => setMode('story');
 $('mCity').onclick  = () => setMode('city');
 
 $('sPlay').onclick = () => {
-  storyOn = !storyOn;
-  $('sPlay').textContent = storyOn ? 'pause' : 'resume';
-  $('sPlay').classList.toggle('primary', storyOn);
+  setPlaying(!storyOn);
   if (storyOn && !storyBusy) nextCase();
 };
-$('sNext').onclick = () => { clearTimers(); storyBusy = false; storyQueue = []; nextCase(); };
+/* Skipping ahead is an explicit request to see something, so it resumes --
+   otherwise the new case would be scheduled straight into a frozen queue. */
+$('sNext').onclick = () => {
+  clearTimers(); storyBusy = false; storyQueue = [];
+  if (!storyOn) setPlaying(true);
+  nextCase();
+};
 
 /* ---------- city controls ---------- */
 let running = false;
@@ -733,6 +869,8 @@ $('run').onclick = () => {
   $('run').textContent = running ? 'pause' : 'start';
   $('run').classList.toggle('primary', !running);
   send({ type: 'run', value: running });
+  send({ type: 'freeze', value: !running });   /* hold missions in place too */
+  setFrozen(!running);
 };
 $('rate').oninput = (e) => {
   $('rateval').textContent = e.target.value;

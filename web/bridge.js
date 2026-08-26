@@ -245,7 +245,7 @@ const sim = {
   villages: [], missions: new Map(),
   dispatched: 0, failed: 0, slaMet: 0, requeued: 0, abandoned: 0,
   lat: [], settled: [], closedEdges: [],
-  backlog: new Backlog(), seq: 0,
+  backlog: new Backlog(), seq: 0, frozen: false,
   clock: 10 * 3600000,          /* simulated time of day */
 };
 
@@ -302,6 +302,32 @@ function makeRequest() {
            rank: Backlog.rank(kase.u, sim.seq) };
 }
 
+/* Timers that a pause can actually stop. `frozen` is deliberately separate
+   from `sim.running`: story mode also runs with sim.running === false, and
+   freezing releases there would strand every ambulance after a few cases. */
+const simTimers = new Set();
+function simLater(fn, ms) {
+  const t = { fn, left: ms, at: 0, id: 0 };
+  if (!sim.frozen) { t.at = Date.now(); t.id = setTimeout(() => { simTimers.delete(t); fn(); }, ms); }
+  simTimers.add(t);
+}
+function freezeSim() {
+  const now = Date.now();
+  for (const t of simTimers) {
+    if (!t.id) continue;
+    clearTimeout(t.id); t.id = 0;
+    t.left = Math.max(0, t.left - (now - t.at));
+  }
+}
+function thawSim() {
+  const now = Date.now();
+  for (const t of simTimers) {
+    if (t.id) continue;
+    t.at = now;
+    t.id = setTimeout(() => { simTimers.delete(t); t.fn(); }, t.left);
+  }
+}
+
 /* Try to serve one request. Returns true if a vehicle was committed. */
 async function attempt(req, fromBacklog) {
   const { v, kase, sla } = req;
@@ -345,9 +371,12 @@ async function attempt(req, fromBacklog) {
     rejected: r.rejected || [], fromBacklog: !!fromBacklog,
   });
 
-  /* Release the vehicle when its (time-compressed) run completes. */
+  /* Release the vehicle when its (time-compressed) run completes. Scheduled
+     through simLater so a pause actually holds it -- a plain setTimeout kept
+     firing while the city was paused, which is why vehicles carried on
+     completing runs after the button said "start". */
   const wall = (r.t_scene_ms + r.t_hosp_ms) / sim.timeScale;
-  setTimeout(async () => {
+  simLater(async () => {
     await engine.send(`RELEASE ${r.amb} ${r.hosp}`);
     sim.missions.delete(id);
     broadcast({ type: 'release', id, amb: r.amb });
@@ -418,6 +447,10 @@ setInterval(async () => {
 async function onCommand(msg) {
   const m = JSON.parse(msg);
   if (m.type === 'run') sim.running = !!m.value;
+  else if (m.type === 'freeze') {
+    const on = !!m.value;
+    if (on !== sim.frozen) { sim.frozen = on; if (on) freezeSim(); else thawSim(); }
+  }
   else if (m.type === 'rate') sim.rate = Math.max(0, Math.min(50, +m.value || 0));
   else if (m.type === 'oneshot') { await spawnEmergency(); }
   else if (m.type === 'surge') {

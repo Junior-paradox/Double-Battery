@@ -1,0 +1,951 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HealthWay — how the dispatch algorithm works</title>
+<style>
+  :root{
+    --bg:#070a0f; --panel:#0f1620; --line:#1e2a38; --ink:#e8eef6; --dim:#8296ad;
+    --ok:#3fb950; --warn:#d29922; --bad:#f85149; --scene:#3b9dff; --hosp:#f0b429;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.68 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  a{color:var(--scene)}
+
+  /* ---------- top bar ---------- */
+  #bar{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:14px;
+    padding:0 20px;height:56px;background:rgba(11,17,26,.93);backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line)}
+  #bar .nm{font-weight:700;font-size:15px;white-space:nowrap}
+  #bar .nm small{color:var(--dim);font-weight:400;font-size:11px;display:block;line-height:1.2}
+  #bar .sp{flex:1}
+  #bar a.back{font-size:12.5px;text-decoration:none;padding:7px 13px;border-radius:7px;
+    background:var(--scene);color:#04101f;font-weight:700;white-space:nowrap}
+
+  .wrap{max-width:880px;margin:0 auto;padding:0 20px 100px}
+
+  /* ---------- hero ---------- */
+  header.hero{padding:54px 0 30px;border-bottom:1px solid var(--line)}
+  h1{font-size:36px;line-height:1.15;letter-spacing:-.6px;margin:0 0 14px;font-weight:750}
+  .lede{font-size:17.5px;color:#c3d1e2;margin:0 0 8px}
+  .brief{color:var(--dim);font-size:13.5px;margin-top:18px}
+
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:30px 0 4px}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:14px 15px}
+  .stat .v{font-size:24px;font-weight:750;letter-spacing:-.5px;font-variant-numeric:tabular-nums}
+  .stat .k{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.7px;margin-top:3px}
+  .stat.a .v{color:var(--scene)} .stat.b .v{color:var(--ok)}
+  .stat.c .v{color:var(--hosp)} .stat.d .v{color:var(--ink)}
+
+  /* ---------- nav ---------- */
+  nav.toc{display:flex;flex-wrap:wrap;gap:8px;margin:26px 0 0;padding:16px 0 0;
+    border-top:1px solid var(--line)}
+  nav.toc a{font-size:12.5px;text-decoration:none;color:var(--dim);padding:6px 12px;
+    border:1px solid var(--line);border-radius:20px;background:#0d1520}
+  nav.toc a:hover{color:var(--ink);border-color:#31445c}
+
+  /* ---------- sections ---------- */
+  section{padding:46px 0 8px;border-bottom:1px solid var(--line)}
+  section:last-of-type{border-bottom:0}
+  .eyebrow{color:var(--scene);font-size:11.5px;font-weight:700;letter-spacing:1.4px;
+    text-transform:uppercase;margin-bottom:9px}
+  h2{font-size:27px;line-height:1.2;letter-spacing:-.4px;margin:0 0 8px;font-weight:720}
+  h3{font-size:18px;margin:34px 0 8px;letter-spacing:-.2px;font-weight:680}
+  h4{font-size:14.5px;margin:24px 0 6px;color:#c3d1e2;font-weight:650}
+  p{margin:0 0 14px}
+  .sub{color:var(--dim);font-size:14.5px;margin:0 0 22px}
+  ul,ol{margin:0 0 15px;padding-left:22px} li{margin:5px 0}
+  b,strong{color:#fff;font-weight:650}
+
+  /* ---------- callouts ---------- */
+  .key{background:linear-gradient(180deg,#0e1a2a,#0d1520);border:1px solid #23405f;
+    border-left:3px solid var(--scene);border-radius:10px;padding:16px 18px;margin:20px 0}
+  .key .lbl{color:var(--scene);font-size:10.5px;font-weight:700;letter-spacing:1.2px;
+    text-transform:uppercase;margin-bottom:5px}
+  .key p:last-child{margin-bottom:0}
+  .warn{background:#1a1410;border:1px solid #4a3a1a;border-left:3px solid var(--hosp);
+    border-radius:10px;padding:16px 18px;margin:20px 0}
+  .warn .lbl{color:var(--hosp);font-size:10.5px;font-weight:700;letter-spacing:1.2px;
+    text-transform:uppercase;margin-bottom:5px}
+  .warn p:last-child{margin-bottom:0}
+
+  /* ---------- code / formula ---------- */
+  pre{background:#0b1119;border:1px solid var(--line);border-radius:10px;padding:14px 16px;
+    overflow-x:auto;margin:16px 0;font-size:12.5px;line-height:1.6;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#c9d6e5}
+  pre .c{color:#5d7186}
+  code{background:#111c28;border:1px solid var(--line);border-radius:5px;padding:1px 6px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;color:#9fd0ff}
+  .formula{background:#0b1119;border:1px solid var(--line);border-radius:10px;
+    padding:20px 18px;margin:18px 0;text-align:center;font-size:15px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#c9d6e5;overflow-x:auto}
+  .formula .hi1{color:var(--scene);font-weight:700}
+  .formula .hi2{color:var(--hosp);font-weight:700}
+  .formula .note{display:block;margin-top:12px;font-size:11.5px;color:var(--dim);
+    font-family:inherit;letter-spacing:.2px}
+
+  /* ---------- tables ---------- */
+  .tw{overflow-x:auto;margin:18px 0}
+  table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:420px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line)}
+  th{color:var(--dim);font-size:10.5px;text-transform:uppercase;letter-spacing:.8px;
+    font-weight:650;border-bottom:1px solid #2a3a4d}
+  td:not(:first-child){font-variant-numeric:tabular-nums}
+  tr.best td{background:#0d1b12}
+  tr.best td:first-child{box-shadow:inset 3px 0 0 var(--ok)}
+  tr.bad td{color:#b08a8a}
+  .win{color:var(--ok);font-weight:700}
+  .lose{color:var(--bad);font-weight:650}
+
+  /* ---------- q & a ---------- */
+  .qa{border-top:1px solid var(--line);padding:20px 0}
+  .qa:first-of-type{border-top:0}
+  .qa .q{font-size:16px;font-weight:680;margin:0 0 8px;color:#fff}
+  .qa .q::before{content:'Q';display:inline-flex;align-items:center;justify-content:center;
+    width:20px;height:20px;border-radius:5px;background:#16283c;color:var(--scene);
+    font-size:11px;font-weight:800;margin-right:9px;vertical-align:2px}
+  .qa p:last-child{margin-bottom:0}
+
+  /* ---------- misc ---------- */
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:18px 0}
+  .cardx{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:15px 16px}
+  .cardx h4{margin:0 0 6px}
+  .cardx p{font-size:13.5px;color:var(--dim);margin:0}
+  .lim{display:flex;gap:11px;padding:11px 0;border-bottom:1px solid #16202c;font-size:14px}
+  .lim:last-child{border-bottom:0}
+  .lim .m{color:var(--hosp);flex:none}
+  .gl{display:grid;grid-template-columns:180px 1fr;gap:6px 18px;font-size:13.5px;margin:16px 0}
+  .gl dt{color:var(--scene);font-weight:650}
+  .gl dd{margin:0;color:var(--dim)}
+  footer{padding:40px 0 0;color:var(--dim);font-size:13px}
+
+  @media (max-width:720px){
+    h1{font-size:28px} h2{font-size:22px}
+    .stats{grid-template-columns:1fr 1fr}
+    .grid2{grid-template-columns:1fr}
+    .gl{grid-template-columns:1fr;gap:2px 0}
+    .gl dd{margin-bottom:10px}
+    #bar .nm small{display:none}
+  }
+</style>
+</head>
+<body>
+
+<div id="bar">
+  <div class="nm">HealthWay<small>rural emergency dispatch</small></div>
+  <div class="sp"></div>
+  <a class="back" href="/">← open the live map</a>
+</div>
+
+<div class="wrap">
+
+<header class="hero">
+  <h1>Choosing the hospital that treats the patient soonest — not the one that is nearest.</h1>
+  <p class="lede">
+    Every "send them to the nearest hospital" system in the world gets this wrong.
+    The nearest hospital may have no specialist on shift, no free bed, no medicine
+    left, or forty people already in the queue. HealthWay minimises
+    <b>travel time + waiting time</b>, and explains every choice it makes.
+  </p>
+
+  <div class="stats">
+    <div class="stat a"><div class="v">50.8 µs</div><div class="k">per decision</div></div>
+    <div class="stat b"><div class="v">0</div><div class="k">mismatches vs exact</div></div>
+    <div class="stat c"><div class="v">19,671</div><div class="k">decisions / sec / core</div></div>
+    <div class="stat d"><div class="v">&lt;20 MB</div><div class="k">for a whole district</div></div>
+  </div>
+
+  <p class="brief">
+    Built against the brief <i>“Rural Healthcare: The Doctor, Ambulance &amp; Medicine
+    Routing Problem”</i> — 50,000+ junctions, 200,000+ roads, 5,000+ villages, dynamic
+    road closures, thousands of simultaneous emergencies, urgency levels, and a
+    decision log that explains itself. Built in a 6-hour hackathon.
+  </p>
+
+  <nav class="toc">
+    <a href="#algorithm">The algorithm</a>
+    <a href="#why-c">Why C</a>
+    <a href="#numbers">The numbers</a>
+    <a href="#problem">Why nearest is wrong</a>
+    <a href="#questions">Questions</a>
+    <a href="#limits">Limitations</a>
+    <a href="#glossary">Glossary</a>
+  </nav>
+</header>
+
+<!-- ============================================================ ALGORITHM -->
+<section id="algorithm">
+  <div class="eyebrow">Part 1 — the core</div>
+  <h2>The algorithm</h2>
+  <p class="sub">Everything else is plumbing. This is the actual idea.</p>
+
+  <h3>The model</h3>
+  <p>
+    A road network is a <b>graph</b>: <b>50,000</b> junctions (nodes) joined by
+    <b>200,100</b> road segments (edges). Each edge carries one number — how many
+    milliseconds it takes to drive it. Roads come in three classes at realistic
+    speeds: 90 km/h highways, 50 km/h main roads, 29 km/h village lanes. A road's
+    time is its length divided by its speed. That is the whole model.
+  </p>
+
+  <h3>Dijkstra, without the maths</h3>
+  <p>
+    Imagine pouring water at a junction. It spreads down every road at driving
+    speed. The moment water reaches a junction you know the fastest route to it,
+    because water always takes the quickest path available and nothing arriving
+    later could have been faster. That is Dijkstra's algorithm (1956).
+  </p>
+  <p>
+    The safety of it rests on one thing: you always process the <b>smallest time
+    first</b>, so any route arriving later must be longer. The first time a
+    junction is settled, its answer is final.
+  </p>
+  <p>
+    Step two — "pick the smallest" — is the expensive part. Scanning 50,000
+    junctions each time would be 2.5 billion comparisons. A <b>binary heap</b>
+    answers it almost instantly. Two refinements matter: when a junction's time
+    improves we <b>push a new entry rather than hunting down the old one</b>
+    (lazy deletion — the wasted work is cheaper than the bookkeeping it replaces),
+    and each heap entry is packed into <b>a single 64-bit integer</b>, time in the
+    top half and junction in the bottom, so comparing two entries is one integer
+    compare.
+  </p>
+
+  <h3>The insight that makes it fast</h3>
+  <p>The naive approach is to try every pairing:</p>
+  <blockquote style="margin:0 0 14px;padding-left:16px;border-left:2px solid var(--line);color:var(--dim)">
+    For each of 200 ambulances and each of 60 hospitals, compute the route from the
+    ambulance to the patient and from the patient to the hospital. 12,000 route
+    calculations. Pick the best.
+  </blockquote>
+  <p>We measured that. <b class="lose">182 milliseconds per patient.</b> Unusable.</p>
+  <p>Now look at what is actually being minimised:</p>
+
+  <div class="formula">
+    total = <span class="hi1">time(ambulance → patient)</span> + <span class="hi2">time(patient → hospital) + wait at hospital</span>
+    <span class="note">the blue term never mentions the hospital · the amber terms never mention the ambulance</span>
+  </div>
+
+  <div class="key">
+    <div class="lbl">The separability argument</div>
+    <p>
+      The two choices are <b>mathematically independent</b>. Which ambulance you send
+      has no effect on which hospital is best, and vice versa. So you do not solve
+      200 × 60 combinations — you solve two separate, much smaller problems.
+      <b>12,000 calculations become 2.</b>
+    </p>
+  </div>
+
+  <h4>Searching backwards</h4>
+  <p>
+    We do not search from each ambulance to the patient — that would be 200 searches.
+    We search <b>outwards from the patient along the roads in reverse</b>. The first
+    free, correctly-equipped ambulance the search reaches is provably the closest, so
+    we stop immediately. One search, not 200. This is why the engine keeps both a
+    forward and a backward copy of the network: twice the memory, 200 searches
+    collapsed into 1.
+  </p>
+  <p>
+    That early exit is enormous. It settles roughly <b>359 junctions out of
+    50,000</b> — under 1% of the map — before it has its answer.
+  </p>
+
+  <h3>The trap: waiting time breaks the early exit</h3>
+  <p>
+    Add queue wait and the neat trick above <b>stops being correct</b>. This is the
+    part most people get wrong.
+  </p>
+
+  <div class="warn">
+    <div class="lbl">Why stopping at the nearest hospital is wrong</div>
+    <p>
+      Search outwards and you reach <b>Hospital A after 10 minutes</b>. Travel-time
+      thinking says stop — A is nearest. But A has 40 people waiting, about 90 minutes
+      of queue. <b>Total: 100 minutes.</b><br>
+      <b>Hospital B is 25 minutes away and empty. Total: 25 minutes.</b>
+      B wins by over an hour, and you never looked at it.
+    </p>
+  </div>
+
+  <p>The correct stopping rule is one line in <code>src/dispatch.c</code>:</p>
+  <pre>if (d &gt;= best_total) break;   /* provably done */</pre>
+  <p>
+    In words: keep searching outward until the frontier is <b>further away than the
+    best complete answer you already hold</b>. At that moment every hospital you have
+    not reached is at least that far in <i>drive time alone</i>, before any queue is
+    added, so none of them can win. Still exact — just more expensive. Measured:
+    <b>7,631 junctions settled</b> for the hospital search against 359 for the
+    ambulance search. The hospital side was consuming <b>81% of the total time</b>.
+  </p>
+
+  <h3>The fix: a hospital distance table</h3>
+  <p>
+    There are only <b>60 hospitals</b>. So run Dijkstra <b>backwards from every
+    hospital once, in advance</b>, and record the drive time from all 50,000
+    junctions to each. A table of 50,000 × 60 numbers: <b>667 ms to build,
+    11.4 MB to hold</b>.
+  </p>
+  <p>Answering a query is then not a search at all. It is a scan of 60 numbers:</p>
+  <pre>for each of the 60 hospitals:
+      does it have the department?          <span style="color:#5d7186">one AND, one compare</span>
+      is a specialist on shift right now?   <span style="color:#5d7186">one AND, one compare</span>
+      is a bed free?                        <span style="color:#5d7186">one compare</span>
+      is the medicine in stock?             <span style="color:#5d7186">one compare</span>
+      total = table[patient][hospital] + queue_wait(hospital)
+      keep the smallest</pre>
+
+  <div class="key">
+    <div class="lbl">Result</div>
+    <p>
+      <b>1,314 µs per decision became 50.8 µs — 26× faster, and the answers are
+      identical.</b> Cross-checked on 300 requests against both full Dijkstra and
+      per-candidate A*: <b class="win">zero mismatches</b>.
+    </p>
+  </div>
+
+  <p>
+    There is a bonus. Because every hospital is now examined anyway, the
+    <b>rejection list comes out for free</b> — which is exactly what powers the
+    decision log the brief asked for.
+  </p>
+
+  <div class="warn">
+    <div class="lbl">The honest cost</div>
+    <p>
+      The table is only valid while the roads are. <b>Close a road and the table is
+      stale.</b> Closing a road is instant — <b>107 nanoseconds</b>, because each road
+      stores a pointer to its twin in the reverse network — but rebuilding the table
+      takes <b>672 ms</b>. For a district where roads close a handful of times a day
+      and thousands of emergencies happen, that is an obviously good trade. For a map
+      that changes every second, it would be the wrong design.
+    </p>
+  </div>
+
+  <h3>Checking constraints in two instructions</h3>
+  <p>
+    How do you check "does this hospital have obstetrics?" quickly? Not with text —
+    with <b>bits</b>. Each specialty is one bit: trauma 0, cardiac 1, neuro 2,
+    burns 3, obstetrics 4, paediatrics 5, toxicology 6, ICU 7. A hospital's
+    departments are one number, a patient's needs are one number:
+  </p>
+  <pre>(hospital_departments &amp; patient_needs) == patient_needs</pre>
+  <p>
+    One AND, one compare — two processor instructions, however many specialties
+    exist. No text comparison, no looping, no allocation. The same trick handles
+    ambulance equipment (advanced life support, ventilator, neonatal).
+  </p>
+
+  <h4>A department is not a doctor</h4>
+  <p>
+    Each hospital carries <b>two</b> such numbers, and the difference matters
+    enormously: <code>spec_mask</code> is the departments the building has at all;
+    <code>on_duty_mask</code> is the specialties with a doctor <b>physically on shift
+    right now</b>. Each of the <b>420 doctors</b> belongs to a hospital, holds one
+    specialty, and works one of three rotating 8-hour shifts. Every clock tick
+    recomputes it.
+  </p>
+  <p>
+    This is why routing at 3 a.m. differs from 10 a.m. — and why the decision log can
+    say <b>“no specialist on duty”</b>, a completely different failure from
+    <b>“no such department”</b>. The first fixes itself by morning. The second needs a
+    new hospital.
+  </p>
+
+  <h3>When everything is busy</h3>
+  <p>
+    Under surge, ambulances run out. Unplaceable patients go onto a waiting list held
+    in a <b>double-ended priority queue</b> (a min-max heap), which can hand you the
+    most or least urgent item equally quickly. Urgency runs 0 (low) to 3
+    (life-threatening), and the ranking key packs urgency and arrival order into one
+    64-bit number — so the most critical patient is released first and, among equally
+    critical patients, whoever called first. <b>Nobody is starved.</b>
+    Measured at <b>27 ns to add, 307 ns to remove</b> over a million entries.
+  </p>
+
+  <h4>The search horizon</h4>
+  <p>
+    There is a nasty failure mode. When every ambulance is busy, the backward search
+    has <b>nothing to stop on</b> — it sweeps all 50,000 junctions before giving up.
+    Exactly when the system is most loaded, it becomes slowest. The fix is a
+    <b>horizon</b>: stop looking beyond ~15 minutes of drive time.
+  </p>
+  <div class="tw"><table>
+    <tr><th>4,000-emergency surge</th><th>Total time</th></tr>
+    <tr class="bad"><td>No horizon</td><td>29,910 ms</td></tr>
+    <tr class="best"><td>15-minute horizon</td><td><b class="win">412 ms — 72× faster</b></td></tr>
+  </table></div>
+  <div class="key">
+    <div class="lbl">The detail that matters</div>
+    <p>
+      The horizon applies to the <b>ambulance leg only, never the hospital leg</b>. An
+      ambulance 40 minutes away is useless. But a specialist burns centre 40 minutes
+      away may be the only place that can save this patient. Capping the hospital
+      search would quietly make the system refuse treatable cases — there is a test
+      guarding exactly this.
+    </p>
+  </div>
+
+  <h3>The full decision, start to finish</h3>
+  <pre>1. Search backwards from the patient for the nearest free ambulance
+   whose equipment covers what is needed.        <span style="color:#5d7186">~359 junctions, early exit</span>
+   Give up beyond the horizon.
+
+2. Scan all 60 hospitals:                        <span style="color:#5d7186">no graph search at all</span>
+      skip: no department / no doctor on shift /
+            no bed / no medicine
+      score = table[patient][hospital] + queue_wait
+      remember every reject and its reason
+
+3. Answer = best ambulance + best hospital,
+            both road paths, and the reject list.
+
+4. On COMMIT:  take a bed, join the queue, consume the medicine.
+5. On RELEASE: free the ambulance and the bed.
+               <span style="color:#e3b341">The medicine stays gone.</span></pre>
+  <p>
+    Total: <b>about 50 microseconds</b> — roughly <b>20,000 decisions per second on a
+    single core</b>, scaling nearly linearly across cores because the road network is
+    read-only and shared with no locking at all.
+  </p>
+</section>
+
+<!-- ================================================================ WHY C -->
+<section id="why-c">
+  <div class="eyebrow">Part 2 — the implementation decision</div>
+  <h2>Why C, and what it actually buys</h2>
+  <p class="sub">
+    The algorithm above is the idea. This is why it runs in 50 microseconds instead of
+    50 milliseconds.
+  </p>
+
+  <p>
+    The workload is <b>millions of small, scattered memory accesses per second</b>.
+    At that scale the bottleneck is not how many instructions you execute — it is how
+    often the processor has to wait for memory. C is the language that lets you decide
+    exactly how data sits in memory, and those decisions <i>are</i> the performance.
+  </p>
+
+  <h3>Four choices you cannot reliably make in a managed language</h3>
+
+  <h4>1 · One struct, not three arrays</h4>
+  <p>
+    Each junction's search state is a single <b>16-byte record</b> holding distance,
+    generation stamp and parent together, aligned so <b>four of them share one 64-byte
+    cache line</b>. A Dijkstra relaxation touches all three fields of the same
+    junction. Stored as three separate arrays that is <b>three independent cache
+    misses</b>; stored as one record it is <b>one</b>.
+  </p>
+
+  <h4>2 · Never clearing the distance array</h4>
+  <p>
+    The obvious way to start a new search is to reset 50,000 distances to infinity.
+    That memset alone costs <b>about 50 µs</b> — which would consume the entire query
+    budget before any work happened. Instead every junction carries a
+    <b>generation stamp</b>: a stale stamp means “infinity”. The per-query reset drops
+    from O(V) to <b>O(1)</b> — it is a single counter increment.
+  </p>
+
+  <h4>3 · One 64-bit integer per queue entry</h4>
+  <p>
+    Each priority-queue entry packs the time into the top half of a 64-bit number and
+    the junction id into the bottom half. Comparing two entries is <b>one integer
+    comparison</b> — about the cheapest thing a processor does — rather than
+    dereferencing two objects.
+  </p>
+
+  <h4>4 · No allocation in the hot loop</h4>
+  <p>
+    Each thread's 1.14 MB workspace is allocated <b>once at startup</b>. Nothing inside
+    a query calls <code>malloc</code>, so there is no allocator contention and no
+    garbage collector deciding to run in the middle of an emergency. That last point
+    matters more than raw speed: <b>a GC pause is a latency spike you cannot predict
+    or explain</b>, and this system's p99 is a number we have to stand behind.
+  </p>
+
+  <div class="key">
+    <div class="lbl">And the process stays resident</div>
+    <p>
+      Building the district costs about <b>12 ms</b> and the hospital table about
+      <b>670 ms</b>. The engine pays that <b>once at boot</b> and then answers questions
+      on a socket, keeping all state between them. Paying it per emergency instead
+      would be roughly <b>13,000× slower</b> — which is what a
+      process-per-request design would do.
+    </p>
+  </div>
+
+  <h3>What that adds up to</h3>
+  <div class="tw"><table>
+    <tr><th>Property</th><th>Result</th></tr>
+    <tr class="best"><td>Decision latency</td><td><b class="win">50.8 µs average, 361 µs p99</b></td></tr>
+    <tr><td>Whole district in memory</td><td>under 20 MB</td></tr>
+    <tr><td>Junctions examined per decision</td><td>359 of 50,000</td></tr>
+    <tr><td>Scaling across cores</td><td>1.96× on 2 threads — the graph is read-only and lock-free</td></tr>
+    <tr><td>Allocation during a query</td><td><b>none</b></td></tr>
+  </table></div>
+
+  <p>
+    The lock-free scaling is a direct consequence of the same discipline: because the
+    road network and distance table are <b>read-only and shared</b>, threads need no
+    coordination at all — each one owns only its private workspace.
+  </p>
+
+  <div class="warn">
+    <div class="lbl">Being honest about the comparison</div>
+    <p>
+      We measured C against <b>other algorithms</b> (the table in the next section),
+      not against other languages — we did not build a Python or JavaScript port to
+      race it. The expectation that an interpreted implementation would land in the
+      <b>tens of milliseconds, roughly a thousand times slower</b>, is an
+      <b>estimate from the operation counts</b>, not a benchmark we ran. What is
+      measured is that the memory-layout work above is what took this engine from
+      <b>1,314 µs to 50.8 µs</b>.
+    </p>
+  </div>
+
+  <p>
+    The trade is real and worth stating: C gives no memory safety, so the discipline
+    has to come from testing instead — which is why the suite is 34 assertions run on
+    every Docker build, and why every fast path is cross-checked against an exhaustive
+    method.
+  </p>
+</section>
+
+<!-- ============================================================== NUMBERS -->
+<section id="numbers">
+  <div class="eyebrow">Part 3 — measured, not estimated</div>
+  <h2>The numbers</h2>
+  <p class="sub">
+    Every figure comes from <code>./bench</code>, run on a fixed random seed
+    (<code>0xc0ffee</code>), so the dataset is identical on every run and every
+    machine. Nothing here is guessed.
+  </p>
+
+  <h3>The dataset</h3>
+  <div class="tw"><table>
+    <tr><th>Quantity</th><th>Value</th><th>Brief asked for</th></tr>
+    <tr><td>Road junctions</td><td><b>50,000</b></td><td>50,000+</td></tr>
+    <tr><td>Road segments (directed)</td><td><b>200,100</b></td><td>200,000+</td></tr>
+    <tr><td>Villages</td><td><b>5,000</b></td><td>5,000+</td></tr>
+    <tr><td>Hospitals</td><td>60</td><td>—</td></tr>
+    <tr><td>Ambulances</td><td>200</td><td>—</td></tr>
+    <tr><td>Doctors</td><td>420 (three rotating 8-hour shifts)</td><td>—</td></tr>
+  </table></div>
+
+  <h3>Speed of a single decision</h3>
+  <p>
+    <b>p99 = 361 µs</b> means 99 of every 100 decisions finished within 361
+    microseconds. Averages hide bad cases; percentiles do not.
+  </p>
+  <div class="tw"><table>
+    <tr><th>Measure</th><th>Value</th></tr>
+    <tr><td>Average</td><td><b>50.8 µs</b></td></tr>
+    <tr><td>Median (p50)</td><td><b>28.4 µs</b></td></tr>
+    <tr><td>p90</td><td>116 µs</td></tr>
+    <tr><td>p99</td><td>361 µs</td></tr>
+    <tr><td>Worst seen</td><td>810 µs</td></tr>
+    <tr class="best"><td>Throughput, one core</td><td><b class="win">19,671 decisions / second</b></td></tr>
+    <tr><td>Junctions examined per decision</td><td>359 of 50,000 — under 1%</td></tr>
+  </table></div>
+  <p style="color:var(--dim);font-size:13.5px">
+    For scale: a human blink is roughly 100,000 µs. You could make about two thousand
+    dispatch decisions in one blink.
+  </p>
+
+  <h3>Against the obvious approaches</h3>
+  <p>Same 200 emergencies, all four methods, <b>identical answers</b>:</p>
+  <div class="tw"><table>
+    <tr><th>Method</th><th>Average</th><th>Slower by</th></tr>
+    <tr class="best"><td><b>Our engine (distance table)</b></td><td><b>50.8 µs</b></td><td>—</td></tr>
+    <tr><td>Bounded Dijkstra ×2</td><td>1,308 µs</td><td>26×</td></tr>
+    <tr><td>Full Dijkstra ×2 + scan</td><td>17,808 µs</td><td><b class="lose">350×</b></td></tr>
+    <tr class="bad"><td>A* per ambulance and hospital</td><td>182,534 µs</td><td><b class="lose">3,593×</b></td></tr>
+  </table></div>
+  <p>
+    That last row is the naive approach — nearly a fifth of a second per patient.
+    Under any real surge it collapses completely.
+  </p>
+
+  <div class="key">
+    <div class="lbl">The row that matters most</div>
+    <p>
+      <b>300 emergencies cross-checked against full Dijkstra AND per-candidate A*.
+      Mismatches: <span class="win">0</span>.</b><br>
+      Fast is only interesting if it is also right. Every shortcut — the early exit,
+      the separability argument, the distance table, the horizon — is checked against
+      the slow, obviously-correct method. <b>We gave up no optimality to get the
+      speed.</b>
+    </p>
+  </div>
+
+  <h3>Memory</h3>
+  <div class="tw"><table>
+    <tr><th>Structure</th><th>Size</th></tr>
+    <tr><td>Road network</td><td><b>6.3 MB</b></td></tr>
+    <tr><td>Hospitals, ambulances, doctors</td><td>34.6 KB</td></tr>
+    <tr><td>Search workspace, per thread</td><td>1.14 MB</td></tr>
+    <tr><td>Hospital distance table</td><td>11.4 MB</td></tr>
+    <tr class="best"><td><b>Whole district</b></td><td><b class="win">under 20 MB</b></td></tr>
+  </table></div>
+  <p style="color:var(--dim);font-size:13.5px">
+    This matters beyond bragging: a rural health system that needs a server rack is a
+    rural health system that never gets deployed.
+  </p>
+
+  <h3>Road closures</h3>
+  <div class="tw"><table>
+    <tr><th>Operation</th><th>Time</th></tr>
+    <tr><td>Close one road, both directions</td><td><b>107 nanoseconds</b></td></tr>
+    <tr><td>Close 4,000 roads</td><td>0.858 ms</td></tr>
+    <tr><td>Reopen 4,000 roads</td><td>0.757 ms</td></tr>
+    <tr><td>Rebuild the distance table afterwards</td><td><b>672 ms</b></td></tr>
+    <tr><td>Decision speed after closures</td><td>52.0 µs — unchanged</td></tr>
+  </table></div>
+
+  <h3>Scaling the network</h3>
+  <div class="tw"><table>
+    <tr><th>Junctions</th><th>Roads</th><th>Decision</th><th>Table memory</th><th>Table build</th></tr>
+    <tr><td>2,000</td><td>7,860</td><td>51.2 µs</td><td>0.0 MB</td><td>1.3 ms</td></tr>
+    <tr><td>8,000</td><td>31,800</td><td>36.3 µs</td><td>0.3 MB</td><td>11.5 ms</td></tr>
+    <tr><td>20,000</td><td>79,830</td><td>54.7 µs</td><td>1.9 MB</td><td>84.7 ms</td></tr>
+    <tr class="best"><td><b>50,000</b></td><td><b>200,100</b></td><td><b>50.2 µs</b></td><td>11.6 MB</td><td>681 ms</td></tr>
+    <tr><td>100,800</td><td>403,936</td><td>54.0 µs</td><td>46.9 MB</td><td>2,744 ms</td></tr>
+    <tr><td>200,000</td><td>802,200</td><td><b>57.1 µs</b></td><td>183.9 MB</td><td>11,677 ms</td></tr>
+  </table></div>
+  <p>
+    Read the third column carefully. The network grows <b>100 times</b> — 2,000 to
+    200,000 junctions — and the decision time goes from 51 µs to 57 µs. It is
+    <b>essentially flat</b>. That is the payoff of the distance table: a query is a
+    scan of the hospital list, and the hospital list does not grow just because the
+    map does. The cost shows up in the last two columns instead, and is stated
+    plainly rather than hidden.
+  </p>
+
+  <h3>Multiple cores</h3>
+  <div class="tw"><table>
+    <tr><th>Threads</th><th>Decisions / sec</th><th>Speedup</th></tr>
+    <tr><td>1</td><td>16,519</td><td>1.00×</td></tr>
+    <tr><td>2</td><td>32,314</td><td><b class="win">1.96×</b></td></tr>
+    <tr><td>4</td><td>44,219</td><td>2.68×</td></tr>
+  </table></div>
+  <p style="color:var(--dim);font-size:13.5px">
+    Near-perfect scaling to 2 threads, because the road network and distance table are
+    read-only and shared with no locks; each thread owns only its private 1.14 MB
+    workspace. The test machine has 4 physical cores, so the 4-thread row is also
+    competing with the operating system.
+  </p>
+
+  <h3>Correctness testing</h3>
+  <p>
+    <code>./tests</code> — <b>34 assertions in 0.78 seconds</b>, run as part of the
+    Docker build, so a broken engine cannot be deployed.
+  </p>
+
+  <h3>Reproducing all of it</h3>
+  <pre>make            <span style="color:#5d7186"># build</span>
+./tests         <span style="color:#5d7186"># 34 correctness checks</span>
+./bench         <span style="color:#5d7186"># every number on this page</span>
+./bench --quick <span style="color:#5d7186"># a faster subset</span></pre>
+  <p style="color:var(--dim);font-size:13.5px">Same seed, same numbers, any machine.</p>
+
+  <div class="warn">
+    <div class="lbl">What we got wrong along the way</div>
+    <p>
+      Two optimisations were implemented on <b>intuition</b> — renumbering junctions so
+      nearby ones sit near each other in memory, and reshaping how edges are stored.
+      Both were reasonable. Both delivered <b>approximately zero improvement</b>.
+      The real problem was found only by <b>measuring the ambulance and hospital
+      searches separately</b>, which revealed the hospital side was eating <b>81%</b>
+      of the time. That single measurement led straight to the distance table and the
+      26× speedup. <b>Profile first, guess never.</b>
+    </p>
+  </div>
+</section>
+
+<!-- ============================================================== PROBLEM -->
+<section id="problem">
+  <div class="eyebrow">Part 4 — the framing</div>
+  <h2>Why “send them to the nearest hospital” is wrong</h2>
+  <p class="sub">The instinct everybody has, wrong for four separate reasons.</p>
+
+  <div class="grid2">
+    <div class="cardx"><h4>1 · The nearest hospital may not do this medicine</h4>
+      <p>A man with a burst appendix does not benefit from arriving at an eye clinic.
+         The nearest building is not the nearest <i>treatment</i>.</p></div>
+    <div class="cardx"><h4>2 · The department exists, nobody is on shift</h4>
+      <p>It is 3 a.m. The hospital has a cardiology department. The cardiologist went
+         home at 10 p.m. On paper it can help. Tonight it cannot.</p></div>
+    <div class="cardx"><h4>3 · The beds and medicine may be gone</h4>
+      <p>The right doctor and no free bed cannot admit the patient. The right doctor
+         and no adrenaline cannot treat the case they were chosen for.</p></div>
+    <div class="cardx"><h4>4 · The queue — this is the big one</h4>
+      <p>A is 10 minutes away with 40 people waiting. B is 25 minutes away and empty.
+         <b>B is more than an hour better.</b></p></div>
+  </div>
+
+  <p>
+    This is the heart of the project. We are not minimising travel time. We are
+    minimising <b>travel time + waiting time</b>, which is a completely different
+    question and a much harder one.
+  </p>
+
+  <h3>And nothing stands still</h3>
+  <p>
+    Roads close — a bridge washes out and the shortest route from ten minutes ago is a
+    dead end. Ambulances get used up. Beds get taken. Medicine gets consumed and does
+    not come back on its own. Doctors change shift. Queues grow with every patient you
+    send. So the answer to “where should this patient go” is different every single
+    time you ask, <b>even for two identical patients ten seconds apart</b>.
+  </p>
+
+  <h3>What “solved” looks like here</h3>
+  <p>For every emergency the system produces:</p>
+  <ul>
+    <li>the ambulance to send, and the exact roads it will drive</li>
+    <li>the hospital to take the patient to, and the exact roads for that leg</li>
+    <li>the predicted arrival time and the predicted waiting time</li>
+    <li><b>a list of the hospitals it rejected and the reason for each</b> — “no such
+        department”, “no specialist on duty”, “no free bed”, “out of medicine”,
+        “unreachable”, “eligible but slower”</li>
+  </ul>
+  <p>
+    That last item is the difference between a system a doctor will trust and a black
+    box a doctor will ignore.
+  </p>
+</section>
+
+<!-- ============================================================ QUESTIONS -->
+<section id="questions">
+  <div class="eyebrow">Part 5 — straight answers</div>
+  <h2>Questions you might ask</h2>
+  <p class="sub">Including the uncomfortable ones.</p>
+
+  <div class="qa">
+    <p class="q">Dijkstra is from 1956. What is actually new here?</p>
+    <p>Dijkstra is the foundation, not the contribution. The contributions are:</p>
+    <ol>
+      <li><b>The separability argument</b> — recognising that ambulance choice and
+          hospital choice are mathematically independent, turning 12,000 route
+          calculations into 2.</li>
+      <li><b>Recognising that queue wait breaks the standard early exit</b> — and
+          deriving the correct stopping rule instead of quietly returning wrong
+          answers, which is what a nearest-hospital system does.</li>
+      <li><b>The hospital distance table</b> — 60 precomputed backward searches turn a
+          query into a 60-item scan, giving flat latency from 2,000 to 200,000
+          junctions.</li>
+      <li><b>The ambulance-only horizon</b> — 72× under surge, applied to the response
+          leg only so distant specialist care is never wrongly excluded.</li>
+      <li><b>The rejection log</b> — because a system a clinician will not trust is a
+          system nobody uses.</li>
+    </ol>
+  </div>
+
+  <div class="qa">
+    <p class="q">Can you prove it is actually giving the best answer?</p>
+    <p>
+      Yes, and it is the check we care most about. Every fast path is cross-checked
+      against the slow, obviously-correct method: <b>300 emergencies against both full
+      Dijkstra and per-candidate A*, with zero mismatches.</b> There is also a test
+      that deliberately constructs a case where the nearest hospital is the
+      <i>wrong</i> answer because of queue wait, confirms the engine picks the further
+      one, and confirms that choice matches exhaustive search.
+    </p>
+  </div>
+
+  <div class="qa">
+    <p class="q">Is this real data or made up?</p>
+    <p>
+      <b>Made up, deliberately, from a fixed random seed.</b> A generated 250 × 200
+      grid with three classes of road at realistic speeds plus bypass links, giving
+      50,000 junctions and 200,100 segments. Three reasons: <b>reproducibility</b>
+      (anyone can run <code>./bench</code> and get these exact numbers — with live data
+      no two runs would agree), <b>scale on demand</b> (we can generate 200,000
+      junctions to test scaling; no public dataset hands you that), and because
+      <b>it is the algorithm being tested</b> — the engine takes junctions, roads and
+      drive times, and does not care where they came from.
+    </p>
+    <p>
+      The path to real data is short: OpenStreetMap via the Overpass API gives real
+      roads and hospital locations, and India's data.gov.in publishes facility data.
+      Both feed the same <code>graph_build</code> function. That swap is a data-loading
+      job, not an algorithm change.
+    </p>
+  </div>
+
+  <div class="qa">
+    <p class="q">Have the tests ever actually caught anything?</p>
+    <p>
+      Yes — and we checked that they can. We deliberately broke the constraint-checking
+      function to see whether the suite would notice. <b>It reported 34 passes.</b> The
+      cause was that the build system did not track header dependencies, so editing a
+      <code>.h</code> file rebuilt nothing that included it — the tests were running
+      against a stale binary. We fixed the build, repeated the sabotage, got the
+      failure we should have got the first time, then undid it.
+      <b>A test suite you have never watched fail is not evidence.</b>
+    </p>
+  </div>
+
+  <div class="qa">
+    <p class="q">Why should I believe the benchmark numbers?</p>
+    <p>
+      Run them — <code>make &amp;&amp; ./bench</code>, fixed seed, identical dataset
+      every time. The benchmark also reports the things that make us look worse: the
+      672 ms table rebuild, the 184 MB at 200,000 junctions, the unreachable-route
+      counts, the SLA misses under load. <b>A benchmark that only reports good news is
+      marketing.</b>
+    </p>
+  </div>
+
+  <div class="qa">
+    <p class="q">Does it really route by type of injury?</p>
+    <p>
+      Yes, and it is not cosmetic. Each specialty is a bit in a bitmask, and a hospital
+      without the bit is <b>excluded — it never even competes</b>. Ten case types are
+      modelled with their real requirements: a delivery needs obstetrics plus a
+      neonatal-equipped ambulance; a poisoning needs toxicology; a critical transfer
+      needs both ICU and cardiac. In story mode you can watch a nearer hospital get
+      rejected with “has no maternity department” while the patient is sent further.
+      Adding ophthalmology or orthopaedics is one more bit each — the checking code
+      does not change at all.
+    </p>
+  </div>
+
+  <div class="qa">
+    <p class="q">Why does the time of day matter?</p>
+    <p>
+      Because a department is not a doctor. Each of the 420 doctors belongs to a
+      hospital, holds one specialty, and works one of three rotating 8-hour shifts;
+      every clock tick recomputes which specialties are actually staffed. So a hospital
+      can have a cardiology department and still be the wrong answer at 3 a.m. The
+      decision log distinguishes <b>“no such department”</b> from <b>“no specialist on
+      duty”</b> — the first is a permanent fact about the building, the second fixes
+      itself by morning. Conflating them would mislead whoever reads the log.
+    </p>
+  </div>
+
+  <div class="qa">
+    <p class="q">What happens when everything is busy?</p>
+    <p>
+      Patients go onto an urgency-ranked waiting list (a double-ended priority queue).
+      The most critical patient is released first; among equally critical patients,
+      whoever called first, so nobody is starved. Every time an ambulance is released
+      the list is drained in that order. Under a 4,000-emergency surge with the horizon
+      on, the whole thing processes in <b>412 ms</b>.
+    </p>
+  </div>
+
+  <div class="qa">
+    <p class="q">What if a road closes mid-emergency?</p>
+    <p>
+      Closing a road is <b>107 nanoseconds</b>. The next decision immediately routes
+      around it, and if a hospital genuinely becomes unreachable it is rejected with
+      the reason “unreachable” rather than silently dropped. The distance table needs a
+      672 ms rebuild to stay exact. There is a test that closes every road into a
+      junction, checks nothing is reachable, reopens them, and verifies the decision
+      comes back <b>identical</b> to before.
+    </p>
+  </div>
+
+  <div class="qa">
+    <p class="q">Where does the medicine go?</p>
+    <p>
+      It is used. Committing a case decrements the hospital's stock permanently.
+      Releasing the case returns the ambulance and the bed but <b>not</b> the medicine,
+      because the patient took it. Stock only rises via an explicit restock. There is a
+      test for exactly this, because “resources that quietly regenerate” is the most
+      common way a simulation flatters its own numbers.
+    </p>
+  </div>
+
+  <div class="qa">
+    <p class="q">Why C? Isn't that an odd choice in 2026?</p>
+    <p>
+      Because the workload is millions of small, scattered memory accesses per second,
+      and C is the language that lets you decide exactly how data sits in memory.
+      Those choices <i>are</i> the performance — the full case, with the four specific
+      decisions and what each one bought, is in <a href="#why-c">Why C</a> above. Short
+      version: 50 µs decisions in under 20 MB, with no allocation in the hot loop and
+      therefore no garbage-collector pause landing in the middle of an emergency.
+    </p>
+  </div>
+
+  <div class="qa">
+    <p class="q">Would this actually work in a real district?</p>
+    <p>
+      The routing core, yes. What would need real-world work: <b>real map data</b>
+      (straightforward, described above); <b>live traffic</b> — the engine already
+      stores a base drive time separately from the current one precisely so a traffic
+      multiplier can be applied, but the plumbing to push live updates in bulk is not
+      written; <b>live hospital status</b> — beds, staff and stock are modelled
+      correctly but fed by simulation, and in reality would come from hospital systems,
+      which is an integration and policy problem more than a technical one; and
+      <b>the 672 ms table rebuild</b>, which would need incremental rebuilding if the
+      map changed constantly.
+    </p>
+  </div>
+
+  <div class="qa">
+    <p class="q">What is the one thing you would show me?</p>
+    <p>
+      <b>Story mode, one cardiac arrest, at 3 a.m.</b> You watch the two nearest
+      hospitals get rejected — one has no cardiology department at all, one has the
+      department but the cardiologist went home — and the patient gets sent to a third
+      hospital further away that can actually treat them. Every step is on screen in
+      plain English. That single case contains the entire argument for why “send them
+      to the nearest hospital” is the wrong answer.
+    </p>
+  </div>
+</section>
+
+<!-- ================================================================ LIMITS -->
+<section id="limits">
+  <div class="eyebrow">Part 6 — stated plainly</div>
+  <h2>Limitations</h2>
+  <p class="sub">The things we would be asked about anyway, said first.</p>
+
+  <div class="lim"><span class="m">▸</span><div><b>Synthetic data.</b> Real maps are a
+    swap-in, but they have not been swapped in.</div></div>
+  <div class="lim"><span class="m">▸</span><div><b>Traffic is static.</b> The hook
+    exists; the live feed does not.</div></div>
+  <div class="lim"><span class="m">▸</span><div><b>The 672 ms table rebuild</b> after
+    road closures.</div></div>
+  <div class="lim"><span class="m">▸</span><div><b>The distance table grows with
+    junctions × hospitals</b> — 184 MB at 200,000 junctions. Beyond that, partition the
+    district or rebuild incrementally.</div></div>
+  <div class="lim"><span class="m">▸</span><div><b>Waiting time is a simple model</b> —
+    queue length × 12 minutes ÷ doctors on duty. Real triage is more complicated. It is
+    simple on purpose, so anyone can verify it by hand.</div></div>
+  <div class="lim"><span class="m">▸</span><div><b>8 specialties</b>, not a full
+    clinical taxonomy.</div></div>
+</section>
+
+<!-- ============================================================= GLOSSARY -->
+<section id="glossary">
+  <div class="eyebrow">Part 7 — reference</div>
+  <h2>Glossary</h2>
+  <dl class="gl">
+    <dt>Graph</dt><dd>Junctions (nodes) joined by roads (edges). How a computer stores a map.</dd>
+    <dt>Dijkstra's algorithm</dt><dd>The 1956 method for finding the fastest route from one point to everywhere else.</dd>
+    <dt>Priority queue / binary heap</dt><dd>A structure that instantly answers “what is the smallest item right now?”</dd>
+    <dt>Lazy deletion</dt><dd>Pushing an improved entry instead of hunting down the old one, and discarding stale copies when they surface.</dd>
+    <dt>Separability</dt><dd>Two choices that do not affect each other, so they can be solved independently rather than in combination.</dd>
+    <dt>Early exit</dt><dd>Stopping a search the moment the answer is provably final.</dd>
+    <dt>Distance table</dt><dd>Precomputed drive times from every junction to every hospital, turning a search into a scan.</dd>
+    <dt>Bitmask</dt><dd>A set stored as bits in one number, so membership tests are single instructions.</dd>
+    <dt>Horizon</dt><dd>A cap on how far the ambulance search will look before giving up.</dd>
+    <dt>Min-max heap</dt><dd>A queue that can produce the most or least urgent item equally fast.</dd>
+    <dt>p50 / p90 / p99</dt><dd>Percentiles. “p99 = 361 µs” means 99 of 100 decisions finished within 361 µs.</dd>
+    <dt>µs / ns</dt><dd>Microsecond = one millionth of a second. Nanosecond = one billionth.</dd>
+  </dl>
+
+  <footer>
+    Every number on this page is reproducible with <code>make &amp;&amp; ./bench</code> on
+    seed <code>0xc0ffee</code>. &nbsp;·&nbsp; <a href="/">Open the live map →</a>
+  </footer>
+</section>
+
+</div>
+</body>
+</html>
