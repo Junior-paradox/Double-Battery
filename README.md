@@ -322,31 +322,3 @@ day shift (10:00).
 | Medicine batch depleted | Rejected, next-best chosen; `RESTOCK` clears it |
 | Simultaneous high-priority requests | Urgency preempts in the backlog |
 | Roads close mid-operation | O(1) weight update; table rebuild flagged |
-
-## Honest gaps
-
-- The distance table is `O(H·V)`: at 60 hospitals it is 11 MB, at 241 it is
-  184 MB and takes 11.7 s to build. Right for a district, wrong for a nation.
-  Beyond a few hundred facilities this needs bucketing by region.
-- A closure makes the table stale. `REBUILD` costs ~670 ms and must be issued
-  by the caller; dirty-region invalidation would be far cheaper.
-- Route **geometry** for the map costs an extra targeted A\* per dispatch
-  (~600 µs), which dwarfs the 50 µs decision. It is display-only and could be
-  computed lazily for the mission being watched.
-- The queue-wait model is a single-server approximation
-  (`queue × 12 min ÷ doctors on duty`). Real triage is not FIFO and service
-  time varies by complaint.
-- Ophthalmology, ENT and orthopaedics are not separate specialties; an eye
-  injury routes to a trauma centre. That is one more bit in the mask and one
-  row in the case table.
-- Ambulances return to their home node on release rather than continuing from
-  where they finished, and are never re-tasked mid-route (no D\* Lite).
-- Doctors are modelled as capacity, not as individuals with skills that differ
-  within a specialty.
-- The concurrency benchmark is read-only; contention under real concurrent
-  mutation is unmeasured.
-- The daemon binds to loopback with no auth or rate limiting. The bridge
-  inherits that. Demo service, not an exposed one.
-- Leaflet loads from unpkg — vendor it locally before demoing offline.
-- The browser builds ~90k local-street segments up front even though they are
-  hidden at the default zoom.
