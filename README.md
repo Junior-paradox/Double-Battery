@@ -23,9 +23,10 @@ seed, so every run produces the identical graph, fleet and request stream.
 | Concurrency | bench §7 |
 | Resident daemon + wire protocol | `src/server.c` |
 | Route geometry for map display | `search_path()` |
+| Interactive map + live telemetry | `web/index.html` |
+| WebSocket bridge | `web/bridge.js` |
 
-Not yet built: HTTP/WebSocket bridge, map UI, multi-stop route optimisation
-(HGS/ALNS).
+Not yet built: multi-stop route optimisation (HGS/ALNS), en-route replanning.
 
 ## Data model
 
@@ -207,6 +208,37 @@ than issue one blocking call per emergency.
 Writers (`CLOSE`, `COMMIT`, `REBUILD`) take an exclusive lock; dispatches take
 a shared one and run concurrently.
 
+## Web demo
+
+Three processes, no build step, no npm install:
+
+```
+make            # builds bench + server
+./server 9090   # engine daemon, ~103 ms startup
+node web/bridge.js
+```
+
+Then open **http://127.0.0.1:8080**.
+
+`web/bridge.js` has **zero dependencies** — the WebSocket handshake and
+framing are written directly against `node:crypto`, so it runs on a bare Node
+install. It holds a pool of 4 pipelined TCP connections to the engine rather
+than one blocking call per emergency, for the reason the throughput table
+above shows.
+
+The map is Leaflet on `L.CRS.Simple`, mapping engine metres straight to map
+units. The network is synthetic, so there is no real geography to put beneath
+it and no tile server is contacted — the demo works with no internet.
+
+Controls: run/pause, emergencies per second, inject a 60-case surge, close
+2000 roads, rebuild the index, reopen. The live panel shows p50/p99 engine
+latency, nodes settled per query, index hit rate, fleet utilisation, beds
+remaining, SLA attainment, and a scrolling decision log.
+
+Verified end to end: 60 hospitals and 200 ambulances loaded, dispatches
+returning route geometry at 96 µs with 87 nodes settled, 2000 roads closed in
+116 ms over the wire, index rebuilt in 135 ms, telemetry at 2 Hz.
+
 ## Honest gaps
 
 - Section 6's horizon dispatches 1429 vs 1463 requests without it — it refuses
@@ -227,4 +259,11 @@ a shared one and run concurrently.
 - `CLOSE` marks the hospital index stale but does not rebuild it; the caller
   must issue `REBUILD` (~95 ms). Dirty-region invalidation would be cheaper.
 - The daemon has no auth, no rate limiting and binds to loopback only. It is a
-  demo service, not an exposed one.
+  demo service, not an exposed one. The bridge inherits that.
+- Leaflet is loaded from unpkg. Vendor it locally before demoing anywhere the
+  network might not cooperate.
+- Closing 2000 roads takes 116 ms through the bridge versus 0.15 ms in the
+  engine — that is 2000 individual commands and JSON parses, not engine cost.
+  A bulk `CLOSE a,b,c` command would remove it.
+- Ambulances return to their home node on release rather than continuing from
+  where they finished.

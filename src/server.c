@@ -16,6 +16,7 @@
  *   CLOSE <edge> | OPEN <edge>   road closure, O(1)
  *   REBUILD                      refresh the hospital index after closures
  *   NODE <index>                 resolve a village index to a node id
+ *   HOSPITALS | FLEET | BOUNDS   static map data for the client
  *   STATS | QUIT
  */
 #define _GNU_SOURCE
@@ -178,6 +179,44 @@ static int handle(Ctx *c, char *line) {
         uint32_t nd = W.village[i];
         return snprintf(c->out, OUT_CAP,
             "{\"ok\":true,\"node\":%u,\"x\":%.1f,\"y\":%.1f}\n", nd, G.x[nd], G.y[nd]);
+    }
+    if (!strncmp(line, "HOSPITALS", 9)) {
+        pthread_rwlock_rdlock(&LOCK);
+        int n = snprintf(c->out, OUT_CAP, "{\"ok\":true,\"hospitals\":[");
+        for (uint32_t i = 0; i < W.n_hosp; i++) {
+            uint32_t nd = W.hosp[i].node;
+            n += snprintf(c->out + n, (size_t)(OUT_CAP - n),
+                "%s{\"id\":%u,\"node\":%u,\"x\":%.1f,\"y\":%.1f,\"spec\":%u,"
+                "\"beds_free\":%d,\"beds_total\":%d}",
+                i ? "," : "", i, nd, G.x[nd], G.y[nd], W.hosp[i].spec_mask,
+                W.hosp[i].beds_free, W.hosp[i].beds_total);
+        }
+        pthread_rwlock_unlock(&LOCK);
+        return n + snprintf(c->out + n, (size_t)(OUT_CAP - n), "]}\n");
+    }
+    if (!strncmp(line, "FLEET", 5)) {
+        pthread_rwlock_rdlock(&LOCK);
+        int n = snprintf(c->out, OUT_CAP, "{\"ok\":true,\"fleet\":[");
+        for (uint32_t i = 0; i < W.n_amb; i++) {
+            uint32_t nd = W.amb[i].node;
+            n += snprintf(c->out + n, (size_t)(OUT_CAP - n),
+                "%s{\"id\":%u,\"node\":%u,\"x\":%.1f,\"y\":%.1f,\"caps\":%u,\"busy\":%u}",
+                i ? "," : "", i, nd, G.x[nd], G.y[nd], W.amb[i].caps_mask, W.amb[i].busy);
+        }
+        pthread_rwlock_unlock(&LOCK);
+        return n + snprintf(c->out + n, (size_t)(OUT_CAP - n), "]}\n");
+    }
+    if (!strncmp(line, "BOUNDS", 6)) {
+        float x0 = G.x[0], x1 = G.x[0], y0 = G.y[0], y1 = G.y[0];
+        for (uint32_t v = 1; v < G.n_nodes; v++) {
+            if (G.x[v] < x0) x0 = G.x[v];
+            if (G.x[v] > x1) x1 = G.x[v];
+            if (G.y[v] < y0) y0 = G.y[v];
+            if (G.y[v] > y1) y1 = G.y[v];
+        }
+        return snprintf(c->out, OUT_CAP,
+            "{\"ok\":true,\"minx\":%.1f,\"miny\":%.1f,\"maxx\":%.1f,\"maxy\":%.1f,"
+            "\"villages\":%u,\"edges\":%u}\n", x0, y0, x1, y1, W.n_village, G.n_edges);
     }
     if (!strncmp(line, "STATS", 5)) {
         pthread_rwlock_rdlock(&LOCK);
