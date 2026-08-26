@@ -4,11 +4,18 @@ Rural healthcare dispatch engine — doctors, ambulances and medicine — writte
 from scratch in C, with a live web simulation on top.
 
 ```
-make            # builds the benchmark and the engine daemon
-./bench         # algorithmic benchmark: latency, complexity, correctness
-./server 9090   # engine daemon
+make              # portable build — bench, server and tests
+make test         # 34 assertions, exits non-zero on failure, under a second
+./bench --quick   # benchmark in ~40 s   (plain ./bench for the full sweep)
+./server 9090     # engine daemon
 node web/bridge.js
 ```
+
+The build is **portable by default**. `-march=native` is opt-in via
+`make NATIVE=1`, because a binary built with it targets the build machine's
+exact CPU and will `SIGILL` on an older one or in a container on different
+hardware. Header dependencies are tracked (`-MMD -MP`), so editing a header
+actually triggers a rebuild instead of silently leaving a stale object behind.
 
 Then open **http://127.0.0.1:8080**. No dependencies beyond libc, pthreads and
 a bare Node install — there is nothing to `npm install`. The dataset is
@@ -324,6 +331,68 @@ doctors on shift, the simulated clock, queue depth, backlog size, and requests
 served after waiting. Hospital markers turn amber below 35% beds and grey when
 full. A **why this hospital** panel carries the same rejection breadcrumbs as
 story mode, and incidents get a floating label on the map as they appear.
+
+## Tests
+
+`make test` builds and runs `src/test.c`, which **asserts** rather than
+prints: every check is named, a failure reports what was expected against what
+happened, and the process exits non-zero. It runs on an 8,000-node network so
+it finishes in under a second.
+
+```
+1. shortest-path correctness — four independent implementations agree
+2. queue wait genuinely changes the destination
+3. resource exhaustion — each constraint rejects on its own
+4. road closures
+5. doctor shifts change routing over the day
+6. urgency preemption in the backlog
+7. resource accounting is conserved
+8. the response horizon bounds the ambulance search only
+
+34 checks, 0 failed
+```
+
+What it actually pins down:
+
+- the distance table agrees with the bounded search, an exhaustive full
+  Dijkstra, and a per-candidate A\* — four independent implementations;
+- **swamping the chosen hospital's queue diverts the patient to one that is
+  genuinely further away by road**, and the new choice still matches
+  exhaustive search — this is the property a travel-time index cannot express;
+- each constraint refuses on its own: no department, no doctor on shift, no
+  bed, no medicine, no free vehicle — and restocking a single hospital revives
+  routing to exactly that hospital;
+- a node cut off by closures reaches zero hospitals, and **reopening the roads
+  restores the byte-identical decision**;
+- some cases route differently at 03:00 than at 10:00;
+- a critical case preempts everything already queued, equal urgency is served
+  oldest-first, and 4,000 mixed requests drain in strict priority order;
+- one commit takes exactly one bed, one vehicle and one queue slot, and
+  medicine does **not** come back on release — only a restock refills it.
+
+The suite is verified to fail: removing the medicine check from
+`hosp_reject_reason` makes it report
+`FAIL  medicine batch depleted everywhere -> request refused` and exit 1.
+
+## Deploying
+
+A C daemon plus a raw-socket Node bridge will not run on a static or
+serverless host. It needs one container, which Fly.io, Render and Railway all
+accept as a plain Dockerfile:
+
+```
+fly launch --no-deploy && fly deploy      # fly.toml is included
+```
+
+The image is two stages: the first compiles the engine with portable flags and
+**runs the test suite as a build step**, so a failing test fails the build. The
+second carries just the binary, `web/`, and Node. `docker-start.sh` starts the
+engine, polls until it accepts connections, then `exec`s the bridge so the
+container's lifetime tracks the web process. The bridge honours `$PORT`, which
+is what those platforms set.
+
+Resident footprint is about 18 MB for the engine plus Node, so the smallest
+instance on any of them is enough.
 
 ## Edge cases
 

@@ -1,3 +1,5 @@
 bench
 server
 *.o
+*.d
+tests

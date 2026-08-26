@@ -1,10 +1,22 @@
-CC      ?= gcc
-CFLAGS  ?= -O3 -march=native -flto -std=c11 -Wall -Wextra -Wno-unused-parameter
+# Portable by default. -march=native is OPT-IN, because a binary built with it
+# targets the build machine's exact CPU and will SIGILL on an older one or in a
+# container on different hardware. Build with `make NATIVE=1` for local
+# benchmarking only; never for anything you ship.
+CC      ?= cc
+NATIVE  ?= 0
+# -MMD -MP emits a .d file per object listing the headers it used, so editing a
+# header actually triggers a rebuild. Without it `make` silently leaves stale
+# objects behind and you test a binary that does not match the source.
+CFLAGS  ?= -O3 -flto -std=c11 -Wall -Wextra -Wno-unused-parameter -MMD -MP
+ifeq ($(NATIVE),1)
+CFLAGS  += -march=native
+endif
 LDFLAGS ?= -lm -lpthread -flto
+
 CORE    := src/graph.c src/dispatch.c src/htable.c
 COBJ    := $(CORE:.c=.o)
 
-all: bench server
+all: bench server tests
 
 bench: $(COBJ) src/bench.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
@@ -12,16 +24,28 @@ bench: $(COBJ) src/bench.o
 server: $(COBJ) src/server.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+tests: $(COBJ) src/test.o
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
+-include $(CORE:.c=.d) src/bench.d src/server.d src/test.d
+
+# Exits non-zero if any assertion fails. Runs in a few seconds.
+test: tests
+	./tests
+
 run: bench
 	./bench
+
+quick: bench
+	./bench --quick
 
 serve: server
 	./server 9090
 
 clean:
-	rm -f src/*.o bench server
+	rm -f src/*.o src/*.d bench server tests
 
-.PHONY: all run clean
+.PHONY: all test run quick serve clean
