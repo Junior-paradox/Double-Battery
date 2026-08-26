@@ -88,4 +88,13 @@ uint32_t dispatch_nearest_ambulance(const Graph *g, Search *s, const World *w,
 uint32_t dispatch_nearest_hospital(const Graph *g, Search *s, const World *w,
                                    const Request *r, uint32_t *out_t);
 
+/* Point-to-point A*. Returns travel time, or INF32 if unreachable. */
+uint32_t dispatch_astar(const Graph *g, Search *s, uint32_t src, uint32_t dst);
+
+/* Walk parent pointers from `from` back to the search root, writing the node
+ * sequence into out[]. Returns the number of nodes written (0 if `from` was
+ * never reached, or if the path exceeds cap). The search must not have been
+ * reset since it ran. */
+uint32_t search_path(const Search *s, uint32_t from, uint32_t *out, uint32_t cap);
+
 #endif

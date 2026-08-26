@@ -153,7 +153,7 @@ void dispatch_fast(const Graph *g, Search *back, Search *fwd,
 }
 
 /* ---- Baseline A: A* per candidate ---- */
-static uint32_t astar(const Graph *g, Search *s, uint32_t src, uint32_t dst) {
+uint32_t dispatch_astar(const Graph *g, Search *s, uint32_t src, uint32_t dst) {
     search_reset(s);
     srelax(s, src, 0, src);
     heap_push(s, astar_h(g, src, dst), src);
@@ -185,14 +185,14 @@ void dispatch_naive_astar(const Graph *g, Search *s, const World *w,
     for (uint32_t i = 0; i < w->n_amb; i++) {
         if (w->amb[i].busy) continue;
         if ((w->amb[i].caps_mask & r->need_amb) != r->need_amb) continue;
-        uint32_t t = astar(g, s, w->amb[i].node, r->node);
+        uint32_t t = dispatch_astar(g, s, w->amb[i].node, r->node);
         if (t < best_ta) { best_ta = t; best_a = i; }
     }
     uint32_t best_h = INF32, best_th = INF32;
     for (uint32_t i = 0; i < w->n_hosp; i++) {
         if (w->hosp[i].beds_free <= 0) continue;
         if ((w->hosp[i].spec_mask & r->need_hosp) != r->need_hosp) continue;
-        uint32_t t = astar(g, s, r->node, w->hosp[i].node);
+        uint32_t t = dispatch_astar(g, s, r->node, w->hosp[i].node);
         if (t < best_th) { best_th = t; best_h = i; }
     }
     d->amb = best_a; d->hosp = best_h;
@@ -261,4 +261,20 @@ void decision_commit(World *w, const Decision *d) {
     if (!d->ok) return;
     w->amb[d->amb].busy = 1;
     w->hosp[d->hosp].beds_free--;
+}
+
+/* Parent pointers point toward the search root, so walking them from any
+ * settled node yields that node's shortest path. The root is its own parent,
+ * which terminates the walk. */
+uint32_t search_path(const Search *s, uint32_t from, uint32_t *out, uint32_t cap) {
+    if (s->st[from].stamp != s->gen) return 0;
+    uint32_t n = 0, v = from;
+    for (;;) {
+        if (n == cap) return 0;
+        out[n++] = v;
+        uint32_t p = s->st[v].parent;
+        if (p == v) break;
+        v = p;
+    }
+    return n;
 }
