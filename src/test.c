@@ -843,6 +843,97 @@ int main(void) {
     }
 
     /* ---------------------------------------------------------------- */
+    G("17. real city rosters — the dataset survives the trip into the engine");
+    {
+        uint32_t n_city = city_count();
+        okf(n_city > 0, "at least one city roster is compiled in", "found %u", n_city);
+
+        World cw; memset(&cw, 0, sizeof cw);
+        okf(!world_build_city(&cw, &g, n_city, N_VILLAGE, 1),
+            "an out-of-range city index is refused, not clamped", "index %u built", n_city);
+
+        /* Every roster, not a sample: a single city whose burns department
+         * went missing would make one case type permanently unservable, and
+         * the failure would look like a dispatch bug rather than a data one. */
+        uint32_t bad_caps = 0, bad_beds = 0, bad_inferred = 0, collided = 0;
+        uint32_t uncovered_city = 0, unstaffed_dept = 0, empty_roster = 0;
+        for (uint32_t c = 0; c < n_city; c++) {
+            const CityInfo *ci = city_info(c);
+            memset(&cw, 0, sizeof cw);
+            if (!world_build_city(&cw, &g, c, N_VILLAGE, 0xBEEF01ull)) { empty_roster++; continue; }
+            if (cw.n_hosp != ci->count) empty_roster++;
+
+            uint32_t city_mask = 0;
+            for (uint32_t i = 0; i < cw.n_hosp; i++) {
+                const CityHospital *ch = city_hospital(c, i);
+                if (cw.hosp[i].spec_mask != ch->caps) bad_caps++;
+                if (cw.hosp[i].beds_total != (int32_t)city_emergency_beds(ch->beds)
+                    || cw.hosp[i].beds_total < 4) bad_beds++;
+                if (ch->inferred & ~ch->caps) bad_inferred++;
+                if (cw.hosp_at[cw.hosp[i].node] != i) collided++;
+                city_mask |= ch->caps;
+
+                /* A department nobody staffs on any shift is a department the
+                 * dispatcher can never use, so it may as well not exist. */
+                uint32_t staffed = 0;
+                for (uint32_t d = 0; d < cw.n_doc; d++)
+                    if (cw.doc[d].hosp == i) staffed |= 1u << cw.doc[d].spec;
+                if (staffed != cw.hosp[i].spec_mask) unstaffed_dept++;
+            }
+            if ((city_mask & 0xFFu) != 0xFFu) uncovered_city++;
+            world_free(&cw);
+        }
+        okf(empty_roster == 0, "every city builds a world with its full roster",
+            "%u rosters came up short", empty_roster);
+        okf(bad_caps == 0, "hospital departments are exactly what the dataset lists",
+            "%u hospitals disagreed", bad_caps);
+        okf(bad_beds == 0, "the emergency bed pool is derived from the reported total",
+            "%u hospitals disagreed", bad_beds);
+        okf(bad_inferred == 0, "inferred departments are always a subset of the departments",
+            "%u hospitals had an inferred bit they do not have", bad_inferred);
+        okf(collided == 0, "no two hospitals are placed on the same junction",
+            "%u collisions", collided);
+        okf(unstaffed_dept == 0, "every department has at least one doctor on some shift",
+            "%u hospitals had an unstaffed department", unstaffed_dept);
+        okf(uncovered_city == 0,
+            "every city can serve all eight case types somewhere in its roster",
+            "%u cities had an unreachable specialty", uncovered_city);
+
+        /* And the engine's own guarantees have to survive the swap: the same
+         * seed must rebuild the same city, and the distance table must still
+         * agree with a search that does not use it. */
+        World a, b; memset(&a, 0, sizeof a); memset(&b, 0, sizeof b);
+        world_build_city(&a, &g, 0, N_VILLAGE, 0xBEEF01ull);
+        world_build_city(&b, &g, 0, N_VILLAGE, 0xBEEF01ull);
+        uint32_t drift = 0;
+        for (uint32_t i = 0; i < a.n_hosp; i++)
+            if (a.hosp[i].node != b.hosp[i].node) drift++;
+        for (uint32_t i = 0; i < a.n_amb; i++)
+            if (a.amb[i].node != b.amb[i].node) drift++;
+        okf(drift == 0 && a.n_doc == b.n_doc,
+            "the same seed rebuilds the identical city", "%u placements drifted", drift);
+        world_free(&b);
+
+        HospTable ct; htable_init(&ct, g.n_nodes, a.n_hosp);
+        htable_build(&ct, &g, &a, &scratch);
+        uint32_t mismatch = 0, routed = 0;
+        for (uint32_t i = 0; i < 40; i++) {
+            Request r = mkreq(a.village[i * 11 % a.n_village], 1u << (i % N_SPEC), 0,
+                              (uint8_t)(i % N_MED), 1, 3);
+            Decision dt, ds;
+            dispatch_table(&g, &back, &a, &ct, &r, &dt);
+            dispatch_fast(&g, &back, &fwd, &a, &r, &ds);
+            if (dt.ok) routed++;
+            if (dt.t_total != ds.t_total) mismatch++;
+        }
+        okf(mismatch == 0, "on a real roster the table still equals a fresh search",
+            "%u of 40 differed", mismatch);
+        okf(routed > 20, "most requests route on a real roster", "only %u of 40 routed", routed);
+        htable_free(&ct);
+        world_free(&a);
+    }
+
+    /* ---------------------------------------------------------------- */
     printf("\n\033[1m%d checks, %d failed\033[0m\n", checks, failures);
     if (failures) printf("\033[31mFAILURES PRESENT\033[0m\n");
     else printf("\033[32mall checks passed\033[0m\n");

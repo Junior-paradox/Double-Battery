@@ -9,7 +9,7 @@ $ make test-all
 74 checks, 0 failed        src/test.c            — engine, in-process
 31 checks, 0 failed        scripts/protocol_test.sh — daemon, over TCP
 ────────────────────────
-105 checks, 0 failed       in under 4 seconds
+130 checks, 0 failed       in under 4 seconds
 ```
 
 **Contents**
@@ -36,8 +36,7 @@ make test-all        # both
 ```
 
 Every target **exits non-zero if any check fails**, so all of them work as CI
-gates. The Docker image runs `make test` as a build step, which means a
-failing test fails the deploy rather than shipping.
+gates.
 
 Output is one line per check, named in plain English, with expected-vs-actual
 printed on failure:
@@ -82,7 +81,7 @@ renumber any other.
 
 ---
 
-## 3. Level 1 — engine suite (74 checks)
+## 3. Level 1 — engine suite (86 checks)
 
 **File:** `src/test.c` · **Run:** `make test` · **Runtime:** ~0.9 s
 
@@ -315,9 +314,31 @@ Technique: **boundary-value and degenerate-input testing**, including the exact 
 | `U-16.9` | logged alternatives are all closer than the chosen hospital, nearest first |
 
 > **Why it matters.** Zero-distance cases, empty requirement masks and exact-boundary comparisons are where off-by-one errors live. The horizon pair is deliberately adjacent: `horizon = drive_time` must accept and `horizon = drive_time - 1` must refuse.
+
+#### 17. real city rosters
+
+Technique: **exhaustive data-driven validation** — every one of the 34 compiled-in rosters is built and checked, not a sample. A dataset defect that leaves one city unable to serve one case type produces a permanently failing dispatch, and the symptom looks like an algorithm bug.
+
+| ID | Assertion |
+|---|---|
+| `U-17.1` | at least one city roster is compiled in |
+| `U-17.2` | an out-of-range city index is refused, not clamped |
+| `U-17.3` | every city builds a world with its full roster |
+| `U-17.4` | hospital departments are exactly what the dataset lists |
+| `U-17.5` | the emergency bed pool is derived from the reported total |
+| `U-17.6` | inferred departments are always a subset of the departments |
+| `U-17.7` | no two hospitals are placed on the same junction |
+| `U-17.8` | every department has at least one doctor on some shift |
+| `U-17.9` | every city can serve all eight case types somewhere in its roster |
+| `U-17.10` | the same seed rebuilds the identical city |
+| `U-17.11` | on a real roster the table still equals a fresh search |
+| `U-17.12` | most requests route on a real roster |
+
+> **Why it matters.** `U-17.9` is the one that earns its keep: 29 of the 34 cities list no burns unit anywhere, and without the referral fallback every burns call in those cities would fail forever. `U-17.11` re-runs the core exactness guarantee (§1) against a roster nobody designed for the algorithm — the hospital count, the department distribution and the bed spread are all whatever the dataset happened to say.
+
 ---
 
-## 4. Level 2 — daemon protocol suite (31 checks)
+## 4. Level 2 — daemon protocol suite (44 checks)
 
 **File:** `scripts/protocol_test.sh` · **Run:** `make test-protocol` ·
 **Runtime:** ~3 s
@@ -422,6 +443,38 @@ State is read via `STATS`, mutated via `COMMIT` / `RELEASE` / `CLOCK` / `RESTOCK
 > **Why it matters.** The bridge pipelines rather than issuing one blocking round trip per emergency. This confirms the daemon actually supports that, with no reply lost or reordered under depth.
 ---
 
+#### 7. real city rosters over the wire
+
+Loads a real hospital roster into a running daemon and checks that the swap is
+total: roster size, named hospitals, dispatch afterwards, and a clean return to
+the synthetic district. This is the level that catches a world swap which
+leaves the distance table sized for the *previous* roster.
+
+| ID | Assertion |
+|---|---|
+| `P-7.1` | CITIES lists the compiled-in rosters |
+| `P-7.2` | the engine starts on the synthetic district |
+| `P-7.3` | CITIES carries the dataset attribution |
+| `P-7.4` | CITY loads a real roster |
+| `P-7.5` | CITY warns that live mission ids are stale |
+| `P-7.6` | STATS reports which roster is loaded |
+| `P-7.7` | HOSPITALS carries real hospital names |
+| `P-7.8` | HOSPITALS carries the reported bed count |
+| `P-7.9` | HOSPITALS flags inferred departments |
+| `P-7.10` | a dispatch resolves against the real roster |
+| `P-7.11` | an out-of-range city index is refused |
+| `P-7.12` | DISTRICT returns to the synthetic world |
+| `P-7.13` | the roster count follows the world and restores on the way back |
+
+> **Why it matters.** `P-7.5` is a contract, not a nicety: the fleet is rebuilt
+> by the swap, so every ambulance and hospital id the client is holding becomes
+> meaningless at that instant. The daemon says so in the reply rather than
+> leaving the bridge to release a bed that no longer exists. `P-7.13` is the
+> round trip — a swap that half-applies would leave the district reporting a
+> city's hospital count.
+
+---
+
 ## 5. Level 3 — benchmark cross-checks
 
 `./bench` is a performance harness, but two of its sections are correctness
@@ -442,7 +495,7 @@ properties proved on the small fixture still hold at production scale.
 
 ## 6. Mutation testing: proof the suite can fail
 
-A green suite proves nothing on its own — a suite of 105 assertions that
+A green suite proves nothing on its own — a suite of 130 assertions that
 happen to be vacuously true would look exactly the same. So each defence was
 verified by **deliberately breaking the code it defends** and confirming the
 right tests go red.
@@ -498,7 +551,9 @@ Every functional requirement mapped to the checks that cover it.
 | Routes are drawable and drivable | `U-12.1`–`U-12.5`, `P-2.5`–`P-2.7` | 1, 2 |
 | The same input always gives the same answer | `U-15.1`–`U-15.3` | 1 |
 | The engine is usable as a service | `P-1.1`–`P-1.7`, `P-2.1`–`P-2.4`, `P-6.1`, `P-6.2` | 2 |
-| Bad input does not take the engine down | `P-3.1`–`P-3.5` | 2 |
+| Bad input does not take the engine down | `P-3.1`–`P-3.5`, `P-7.11` | 2 |
+| Real hospital rosters load and behave like the synthetic one | `U-17.1`–`U-17.12`, `P-7.1`–`P-7.13` | 1, 2 |
+| Data provenance is carried to the client, not asserted in prose | `U-17.4`, `U-17.6`, `P-7.3`, `P-7.7`–`P-7.9` | 1, 2 |
 | Latency, throughput, scaling, concurrency | `./bench` §3, §4, §7, §8 | 3 |
 
 ---
@@ -556,16 +611,27 @@ honest.
    generation-counter overflow path in `search_reset()`, for instance — are not
    distinguished from covered ones.
 
-4. **The network is synthetic.** A jittered grid with mixed road classes and
-   long-range bypasses, not OpenStreetMap data. The algorithm consumes any
-   weighted digraph, but measured settled-node counts would differ on real
-   topology.
+4. **The network is synthetic, even in real-city mode.** A jittered grid with
+   mixed road classes and long-range bypasses, not OpenStreetMap data. The
+   hospital *rosters* are real (§3.17), but the published dataset carries no
+   coordinates, so real hospitals are placed on the generated grid. Nothing in
+   the suite can validate a position that is not claimed to be a position. The
+   algorithm consumes any weighted digraph, but measured settled-node counts
+   would differ on real topology.
 
-5. **`ROADS` pagination is untested.** The protocol suite covers every other
+5. **The inferred referral designations are a judgement call, not a fact under
+   test.** `U-17.6` proves an inferred department is always a real subset of
+   the hospital's departments and `U-17.9` proves the fallback closes every
+   coverage hole, but no test can establish that the *right* hospital was
+   designated — the dataset is silent, which is why the fallback exists. The
+   engine's obligation is to carry the flag to the client (`P-7.9`) so the UI
+   can label it, and that is what is tested.
+
+6. **`ROADS` pagination is untested.** The protocol suite covers every other
    command; the paginated geometry endpoint is exercised by the web client but
    has no assertion of its own.
 
-6. **The web front end has no automated tests.** `web/index.html` and
+7. **The web front end has no automated tests.** `web/index.html` and
    `web/bridge.js` are verified by use, not by assertion. The bridge's contract
    with the engine is covered by the protocol suite; the rendering above it is
    not.

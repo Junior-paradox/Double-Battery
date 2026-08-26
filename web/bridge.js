@@ -273,18 +273,39 @@ async function loadRoads() {
   return out;
 }
 
+/* The city roster is compiled into the engine, so it never changes while the
+   process lives. Which one is LOADED does change -- that comes from STATS. */
+let citiesCache = null;
+async function loadCities() {
+  if (citiesCache) return citiesCache;
+  const r = await engine.send('CITIES');
+  /* "unknown command" here means the daemon predates the real-city rosters --
+     a stale ./server left running across a rebuild. Say that, rather than
+     letting it read as an engine that is down. */
+  if (!r || !r.ok) throw new Error(
+    `engine CITIES failed: ${(r && r.error) || 'no reply'}`
+    + (r && r.error === 'unknown command'
+       ? ' (the running engine is older than this bridge — rebuild and restart ./server)' : ''));
+  citiesCache = r;
+  return r;
+}
+
 async function loadStatics() {
   const b = await engine.send('BOUNDS');
   const h = await engine.send('HOSPITALS');
   const f = await engine.send('FLEET');
+  const s = await engine.send('STATS');
   /* Surface an unreachable engine as a real failure. Returning half-built
      statics here is what turned a dead daemon into a blank, silent page. */
-  for (const [what, r] of [['BOUNDS', b], ['HOSPITALS', h], ['FLEET', f]])
+  for (const [what, r] of [['BOUNDS', b], ['HOSPITALS', h], ['FLEET', f], ['STATS', s]])
     if (!r || !r.ok) throw new Error(`engine ${what} failed: ${(r && r.error) || 'no reply'}`);
+  const cities = await loadCities();
   const idx = Array.from({ length: 1200 }, (_, i) => `NODE ${i * 4}`);
   const nodes = await engine.batch(idx);
   sim.villages = nodes.filter((n) => n.ok).map((n) => ({ node: n.node, x: n.x, y: n.y }));
-  return { bounds: b, hospitals: h.hospitals, fleet: f.fleet };
+  return { bounds: b, hospitals: h.hospitals, fleet: f.fleet,
+           cities: cities.cities, dataVersion: cities.version, dataSource: cities.source,
+           world: { city: s.city, name: s.world } };
 }
 
 function pct(arr, q) {
@@ -325,6 +346,57 @@ function thawSim() {
     if (t.id) continue;
     t.at = now;
     t.id = setTimeout(() => { simTimers.delete(t); t.fn(); }, t.left);
+  }
+}
+
+/* Loading another world invalidates every id the simulation is holding:
+   hospital 12 in Pune is not hospital 12 in the district, and the release
+   timer for a mission dispatched a moment ago would free a bed that no longer
+   exists. So the sim is emptied down to its counters rather than migrated. */
+function resetSim() {
+  for (const t of simTimers) if (t.id) clearTimeout(t.id);
+  simTimers.clear();
+  sim.missions.clear();
+  sim.backlog = new Backlog();
+  sim.dispatched = sim.failed = sim.slaMet = 0;
+  sim.requeued = sim.abandoned = 0;
+  sim.lat = []; sim.settled = []; sim.seq = 0; sim.acc = 0; sim.nextId = 1;
+}
+
+/* Serialised: two overlapping switches would race the engine's world rebuild
+   against a statics read and hand the browser a roster from the wrong city. */
+let switching = false;
+async function loadWorld(idx) {
+  if (switching) return;
+  switching = true;
+  const wasRunning = sim.running;
+  try {
+    sim.running = false;
+    resetSim();
+    /* A half-closed road network carried into another city is nobody's idea
+       of a fresh start, and the closure count on screen would be a lie. */
+    const reopen = sim.closedEdges.splice(0).map((e) => `OPEN ${e}`);
+    if (reopen.length) await engine.batch(reopen);
+
+    const r = await engine.send(idx < 0 ? 'DISTRICT' : `CITY ${idx}`);
+    if (!r || !r.ok) {
+      broadcast({ type: 'log', level: 'bad',
+        text: `could not load that world: ${(r && r.error) || 'no reply from the engine'}` });
+      return;
+    }
+    sim.clock = 10 * 3600000;
+    await engine.send(`CLOCK ${sim.clock}`);
+
+    const s = await loadStatics();
+    broadcast({ type: 'init', ...s, switched: true });
+    broadcast({ type: 'log', level: 'ok',
+      text: `${r.name} loaded — ${r.hospitals} hospitals, ${r.ambulances} ambulances, `
+          + `${r.doctors} doctors; distance table rebuilt in ${r.took_ms} ms` });
+  } catch (e) {
+    broadcast({ type: 'log', level: 'bad', text: `world switch failed: ${e.message}` });
+  } finally {
+    switching = false;
+    sim.running = wasRunning;
   }
 }
 
@@ -386,6 +458,7 @@ async function attempt(req, fromBacklog) {
 }
 
 async function spawnEmergency() {
+  if (switching) return;          /* its hospital ids would be from the old world */
   const req = makeRequest();
   if (req) await attempt(req, false);
 }
@@ -485,6 +558,10 @@ async function onCommand(msg) {
       text: `clock set to ${String(Math.floor(sim.clock / 3600000)).padStart(2, '0')}:00 — `
           + `${r.docs_on_duty} doctors on duty across ${r.staffed_departments} departments` });
     drainBacklog();
+  } else if (m.type === 'world') {
+    /* -1 is the synthetic district; anything else is an index into CITIES. */
+    const v = Number(m.value);
+    if (Number.isInteger(v)) await loadWorld(v);
   } else if (m.type === 'rebuild') {
     const r = await engine.send('REBUILD');
     broadcast({ type: 'log', level: 'ok',

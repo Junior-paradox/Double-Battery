@@ -1,4 +1,27 @@
 #include "dispatch.h"
+#include "city_data.h"
+
+/* ------------------------------------------------------------------ */
+/* real city roster                                                    */
+
+uint32_t city_count(void) { return (uint32_t)N_CITY; }
+const char *city_data_version(void) { return CITY_DATA_VERSION; }
+const char *city_data_source(void)  { return CITY_DATA_SOURCE; }
+
+const CityInfo *city_info(uint32_t c) {
+    return c < N_CITY ? &CITY_LIST[c] : NULL;
+}
+const CityHospital *city_hospital(uint32_t c, uint32_t k) {
+    if (c >= N_CITY || k >= CITY_LIST[c].count) return NULL;
+    return &CITY_HOSP[CITY_LIST[c].first + k];
+}
+
+uint32_t city_emergency_beds(uint32_t reported) {
+    uint32_t pool = reported / 12;
+    if (pool < 4)   pool = 4;      /* even a nursing home holds a few */
+    if (pool > 200) pool = 200;
+    return pool;
+}
 
 /* ------------------------------------------------------------------ */
 /* world construction                                                  */
@@ -90,7 +113,162 @@ void world_build(World *w, const Graph *g, uint32_t n_hosp, uint32_t n_amb,
     }
     for (uint32_t i = 0; i < n_village; i++) w->village[i] = rng_u32(&rng, V);
 
+    w->city = -1;
     world_set_clock(w, 10u * 3600000u);          /* 10:00, day shift */
+}
+
+/* Metro hospitals are not scattered uniformly: the big tertiary centres sit
+ * in the old core and the smaller ones ring the outskirts. The dataset has no
+ * coordinates, so rank stands in for one -- sample a handful of free
+ * junctions and keep whichever sits nearest a radius derived from the
+ * hospital's size rank. Deterministic given the seed. */
+static uint32_t place_by_rank(const Graph *g, const World *w, Rng *rng,
+                              double cx, double cy, double radius,
+                              uint32_t rank, uint32_t of) {
+    double want = radius * (0.10 + 0.80 * (of > 1 ? (double)rank / (of - 1) : 0.0));
+    uint32_t best = INF32;
+    double best_err = 0;
+    for (uint32_t try = 0; try < 32; try++) {
+        uint32_t nd = rng_u32(rng, g->n_nodes);
+        if (w->hosp_at[nd] != INF32) continue;
+        double dx = g->x[nd] - cx, dy = g->y[nd] - cy;
+        double err = __builtin_fabs(__builtin_sqrt(dx * dx + dy * dy) - want);
+        if (best == INF32 || err < best_err) { best = nd; best_err = err; }
+    }
+    /* Every candidate was already taken -- fall back to a linear probe so the
+     * build cannot fail on an unlucky draw. */
+    if (best == INF32)
+        for (uint32_t nd = rng_u32(rng, g->n_nodes), k = 0; k < g->n_nodes; k++)
+            if (w->hosp_at[(nd + k) % g->n_nodes] == INF32)
+                { best = (nd + k) % g->n_nodes; break; }
+    return best;
+}
+
+int world_build_city(World *w, const Graph *g, uint32_t city,
+                     uint32_t n_village, uint64_t seed) {
+    /* An empty roster would divide by zero when parking the fleet. The
+     * generator cannot emit one today; this is here so that a regenerated
+     * table with a different size threshold fails a build rather than a
+     * dispatch. */
+    const CityInfo *ci = city_info(city);
+    if (!ci || !ci->count) return 0;
+
+    Rng rng; rng_seed(&rng, seed ^ ((uint64_t)city << 32));
+    uint32_t V = g->n_nodes, H = ci->count;
+
+    /* A metro fields a bigger fleet than a rural district, and a 30-hospital
+     * city a bigger one than an 8-hospital city. The floor matters more than
+     * it looks: most of these vehicles wait at hospitals, hospitals cluster in
+     * the core, and a fleet sized only for the roster leaves the edge of the
+     * map with nothing inside the response horizon -- which reads as the
+     * algorithm failing when it is really the fleet being too small. */
+    uint32_t n_amb = H * 8;
+    if (n_amb < 160) n_amb = 160;
+    if (n_amb > 320) n_amb = 320;
+
+    w->n_hosp = H; w->n_amb = n_amb; w->n_village = n_village;
+    w->city = (int32_t)city;
+    w->hosp = xcalloc(H, sizeof(Hospital));
+    w->amb  = xmalloc(sizeof(Ambulance) * n_amb);
+    w->village = xmalloc(sizeof(uint32_t) * n_village);
+    w->hosp_at  = xmalloc(sizeof(uint32_t) * V);
+    w->amb_head = xmalloc(sizeof(uint32_t) * V);
+    w->amb_next = xmalloc(sizeof(uint32_t) * n_amb);
+    for (uint32_t v = 0; v < V; v++) { w->hosp_at[v] = INF32; w->amb_head[v] = INF32; }
+
+    double x0 = g->x[0], x1 = g->x[0], y0 = g->y[0], y1 = g->y[0];
+    for (uint32_t v = 1; v < V; v++) {
+        if (g->x[v] < x0) x0 = g->x[v];
+        if (g->x[v] > x1) x1 = g->x[v];
+        if (g->y[v] < y0) y0 = g->y[v];
+        if (g->y[v] > y1) y1 = g->y[v];
+    }
+    double cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    double radius = 0.5 * ((x1 - x0) < (y1 - y0) ? (x1 - x0) : (y1 - y0));
+
+    /* Records arrive sorted by bed count, so index 0 is the city's referral
+     * centre. Departments, beds and accreditation are the dataset's; the
+     * medicine store is invented in proportion to size. */
+    uint32_t total_docs = 0;
+    for (uint32_t i = 0; i < H; i++) {
+        const CityHospital *ch = city_hospital(city, i);
+        uint32_t nd = place_by_rank(g, w, &rng, cx, cy, radius, i, H);
+        w->hosp_at[nd] = i;
+        w->hosp[i].node = nd;
+        w->hosp[i].spec_mask = ch->caps;
+        int32_t beds = (int32_t)city_emergency_beds(ch->beds);
+        w->hosp[i].beds_free = w->hosp[i].beds_total = beds;
+        for (uint32_t m = 0; m < N_MED; m++) {
+            int32_t cap = 24 + (int32_t)(ch->beds / 8);
+            if (cap > 400) cap = 400;
+            w->hosp[i].med_cap[m] = cap;
+            w->hosp[i].med[m] = cap;
+        }
+        uint32_t depts = (uint32_t)__builtin_popcount(ch->caps);
+        uint32_t docs = 3 + ch->beds / 100;
+        if (docs < depts) docs = depts;      /* a department with no doctor is never open */
+        if (docs > 24) docs = 24;
+        w->hosp[i].docs_on_duty = 0;
+        total_docs += depts ? docs : 0;
+    }
+
+    /* Every department gets one doctor first, spread across the three shifts,
+     * then the remaining headcount is dealt out at random. A small hospital
+     * therefore covers each of its departments on exactly one shift in three
+     * -- which is why a 2 a.m. cardiac call in this city drives past four
+     * hospitals that do have a cardiology wing. */
+    w->doc = xmalloc(sizeof(Doctor) * (total_docs ? total_docs : 1));
+    w->n_doc = 0;
+    for (uint32_t i = 0; i < H; i++) {
+        uint32_t have = w->hosp[i].spec_mask;
+        if (!have) continue;                 /* single-discipline centre, takes no emergencies */
+        uint32_t depts = (uint32_t)__builtin_popcount(have);
+        uint32_t docs = 3 + city_hospital(city, i)->beds / 100;
+        if (docs < depts) docs = depts;
+        if (docs > 24) docs = 24;
+
+        uint32_t placed = 0, shift = rng_u32(&rng, 3);
+        for (uint32_t s = 0; s < N_SPEC && placed < docs; s++) {
+            if (!((have >> s) & 1u)) continue;
+            w->doc[w->n_doc++] = (Doctor){ i, (uint8_t)s,
+                shift * 8u * 3600000u, ((shift + 1u) % 3u) * 8u * 3600000u };
+            shift = (shift + 1) % 3;
+            placed++;
+        }
+        for (; placed < docs; placed++) {
+            uint32_t spec, guard = 0;
+            do { spec = rng_u32(&rng, N_SPEC); }
+            while (!((have >> spec) & 1u) && ++guard < 32);
+            if (!((have >> spec) & 1u)) continue;
+            uint32_t sh = rng_u32(&rng, 3);
+            w->doc[w->n_doc++] = (Doctor){ i, (uint8_t)spec,
+                sh * 8u * 3600000u, ((sh + 1u) % 3u) * 8u * 3600000u };
+        }
+    }
+
+    /* City ambulances are hospital-based, but not all of them: some wait at a
+     * hospital and the rest hold standby points across the network, which is
+     * what keeps the outer wards inside a response horizon at all.
+     *
+     * The parking rule must not share a period with the equipment rules. It
+     * did -- both were `i % 3` -- and the result was that every single
+     * ventilator-equipped vehicle sat at a hospital, hospitals cluster in the
+     * core, and two thirds of the map could not be reached by the one kind of
+     * ambulance a cardiac arrest needs. 5 is coprime with both 3 and 4, so
+     * equipment and parking are now independent. */
+    for (uint32_t i = 0; i < n_amb; i++) {
+        uint32_t caps = CAP_ALS;
+        if (i % 3 == 0) caps |= CAP_VENTILATOR;
+        if (i % 7 == 0) caps |= CAP_NEONATAL;
+        if (i % 4 == 1) caps &= ~(uint32_t)CAP_ALS;
+        w->amb[i] = (Ambulance){ 0, caps, 0 };
+        uint32_t node = (i % 5 == 0) ? w->hosp[i % H].node : rng_u32(&rng, V);
+        world_place_ambulance(w, i, node);
+    }
+    for (uint32_t i = 0; i < n_village; i++) w->village[i] = rng_u32(&rng, V);
+
+    world_set_clock(w, 10u * 3600000u);
+    return 1;
 }
 
 void world_place_ambulance(World *w, uint32_t a, uint32_t node) {

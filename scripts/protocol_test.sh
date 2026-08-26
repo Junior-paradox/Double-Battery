@@ -78,6 +78,7 @@ match "${REPLY[3]}" '"ok":true'      "FLEET returns the ambulance list"
 match "${REPLY[4]}" '"node"'         "NODE resolves a village to a road node"
 
 NODES=$(field "${REPLY[0]}" nodes)
+DISTRICT_H=$(field "${REPLY[0]}" hospitals)
 NODE=$(field "${REPLY[4]}" node)
 ok $([ "${NODES:-0}" -gt 0 ] && echo 1 || echo 0) \
    "the daemon serves a non-empty network" "nodes=$NODES"
@@ -165,6 +166,36 @@ for r in "${REPLY[@]}"; do case "$r" in *'"ok":true'*) ;; *) SAME=0 ;; esac; don
 ok "$SAME" "every pipelined reply is a successful decision"
 MS=$(( (T1 - T0) / 1000000 ))
 printf '        200 dispatches in %s ms over one socket\n' "$MS"
+
+printf '\n%s7. real city rosters over the wire%s\n' "$BOLD" "$OFF"
+send "CITIES"
+match "${REPLY[0]}" '"cities":['   "CITIES lists the compiled-in rosters"
+match "${REPLY[0]}" '"active":-1'  "the engine starts on the synthetic district"
+match "${REPLY[0]}" 'CC-BY 4.0'    "CITIES carries the dataset attribution"
+
+# Load a real roster and check the swap is total: roster size, named
+# hospitals, and a dispatch that still resolves afterwards.
+send "CITY 0" "STATS" "HOSPITALS" "DISPATCH $NODE 1 0 0 1 3 480000 0 0"
+match "${REPLY[0]}" '"ok":true'                 "CITY loads a real roster"
+match "${REPLY[0]}" '"missions_invalidated"'    "CITY warns that live mission ids are stale"
+match "${REPLY[1]}" '"city":0'                  "STATS reports which roster is loaded"
+match "${REPLY[2]}" '"name":"'                  "HOSPITALS carries real hospital names"
+match "${REPLY[2]}" '"beds_reported"'           "HOSPITALS carries the reported bed count"
+match "${REPLY[2]}" '"inferred"'                "HOSPITALS flags inferred departments"
+match "${REPLY[3]}" '"ok":true'                 "a dispatch resolves against the real roster"
+CITY_H=$(field "${REPLY[1]}" hospitals)
+
+send "CITY 99999"
+match "${REPLY[0]}" '"ok":false' "an out-of-range city index is refused"
+
+# ...and that going back restores the district exactly, not some hybrid.
+send "DISTRICT" "STATS"
+match "${REPLY[0]}" '"city":-1'  "DISTRICT returns to the synthetic world"
+BACK_H=$(field "${REPLY[1]}" hospitals)
+ok $([ -n "$CITY_H" ] && [ -n "$BACK_H" ] && [ "$CITY_H" != "$BACK_H" ] \
+     && [ "$BACK_H" = "$DISTRICT_H" ] && echo 1 || echo 0) \
+   "the roster count follows the world and restores on the way back" \
+   "district=$DISTRICT_H city=$CITY_H back=$BACK_H"
 
 printf '\n%s%d checks, %d failed%s\n' "$BOLD" "$CHECKS" "$FAILS" "$OFF"
 if [ "$FAILS" -gt 0 ]; then

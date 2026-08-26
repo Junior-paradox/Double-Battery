@@ -102,10 +102,61 @@ typedef struct {
     uint32_t  *amb_next;  /* ambulance -> next at same node */
     uint32_t  *village;   uint32_t n_village;
     uint32_t   clock_ms;  /* time of day, drives shifts */
+    int32_t    city;      /* index into the real-city table, -1 = synthetic district */
 } World;
+
+/* ---------------------------------------------------------------- */
+/* Real cities.
+ *
+ * The synthetic district proves the algorithm; a real roster proves it is
+ * describing something. These records come from a published open dataset of
+ * Indian hospitals (see src/city_data.h) and are compiled in, not fetched.
+ *
+ * REAL      name, area, beds, type, nabh, rating, and the departments behind
+ *           `caps` -- mapped from the specialties each hospital publishes.
+ * INFERRED  the bits in `inferred`: capabilities no hospital in that city
+ *           listed, handed to its largest public hospital so the case type is
+ *           servable at all. Callers must present these as inferred.
+ * SYNTHETIC everything the dataset does not carry: where the hospital sits,
+ *           the roads, the ambulances, the doctors and their shifts, the
+ *           medicine, the queue. The dataset has no coordinates at all, so a
+ *           real-city run is a real roster on a generated street grid.
+ */
+typedef struct {
+    const char *name, *area;
+    uint16_t beds;        /* total beds the hospital reports */
+    uint8_t  caps;        /* CAP_* mask, departments */
+    uint8_t  inferred;    /* subset of caps that the dataset did not support */
+    uint8_t  type;        /* 0 private, 1 government, 2 trust */
+    uint8_t  nabh, rating10;
+} CityHospital;
+
+typedef struct {
+    const char *name, *slug;
+    uint16_t first, count;      /* slice of the hospital table */
+} CityInfo;
+
+uint32_t            city_count(void);
+const CityInfo     *city_info(uint32_t city);              /* NULL if out of range */
+const CityHospital *city_hospital(uint32_t city, uint32_t k);  /* NULL if out of range */
+const char         *city_data_version(void);
+const char         *city_data_source(void);
+
+/* Emergency-admission beds, from a reported total. A hospital's headline bed
+ * count is its whole inpatient estate; what a dispatcher can actually claim
+ * is the critical-care pool, roughly a twelfth of it in Indian tertiary
+ * hospitals. Dispatching against the headline number would mean no hospital
+ * in a metro ever runs out of beds, and REJ_NO_BED would never fire. */
+uint32_t city_emergency_beds(uint32_t reported);
 
 void world_build(World *w, const Graph *g, uint32_t n_hosp, uint32_t n_amb,
                  uint32_t n_village, uint32_t docs_per_hosp, uint64_t seed);
+
+/* Same world, real roster: one hospital per record in the city's slice,
+ * staffed and stocked in proportion to its real size. Fleet size scales with
+ * the roster. Returns 0 if `city` is out of range and builds nothing. */
+int world_build_city(World *w, const Graph *g, uint32_t city,
+                     uint32_t n_village, uint64_t seed);
 void world_free(World *w);
 size_t world_bytes(const World *w);
 void world_reset_state(World *w, const Graph *g, uint64_t seed);

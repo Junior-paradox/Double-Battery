@@ -13,6 +13,8 @@
     --bg:#070a0f; --panel:#0f1620; --line:#1e2a38; --ink:#e8eef6; --dim:#8296ad;
     --ok:#3fb950; --warn:#d29922; --bad:#f85149; --scene:#3b9dff; --hosp:#f0b429;
     --strip:64px; --storyctl:60px;
+    /* Leaflet zoom control: two 26px buttons inside a 2px border. */
+    --zoomh:56px;
   }
   *{box-sizing:border-box}
   /* Native scrollbars render light-on-dark and cut a bright stripe down every
@@ -47,6 +49,35 @@
   .modes button{padding:7px 13px;border:0;background:#131c28;color:var(--dim);
     font-size:12px;cursor:pointer;font-weight:600}
   .modes button.on{background:var(--scene);color:#04101f}
+
+  /* ---------- real city picker ---------- */
+  /* flex:none so the picker keeps its height and #hud gives way instead --
+     but bounded, because expanding all 34 cities is eight rows of chips and
+     on a short window that would push the telemetry off the rail entirely. */
+  #cities{padding:13px 14px;width:100%;flex:none;max-height:52vh;overflow:auto}
+  #cities .chead{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+  #cities .cstat{color:var(--dim);font-size:10.5px;font-variant-numeric:tabular-nums;
+    white-space:nowrap}
+  .chips{display:flex;flex-wrap:wrap;gap:5px;margin:10px 0 2px}
+  .chips button{padding:5px 9px;border:1px solid var(--line);border-radius:999px;
+    background:#131c28;color:var(--dim);font-size:11.5px;font-weight:600;cursor:pointer;
+    font-family:inherit}
+  .chips button:hover{color:var(--ink);border-color:#2f4059}
+  .chips button.on{background:var(--hosp);border-color:var(--hosp);color:#1c1204}
+  /* The rest of the 34 cities, folded away: the eight metros answer the
+     question "does this work on a real roster", and a 34-chip wall does not. */
+  .chips button.more{border-style:dashed}
+  #cities .prov{margin-top:11px;padding-top:9px;border-top:1px solid var(--line);
+    color:var(--dim);font-size:10.5px;line-height:1.55}
+  #cities .prov b{color:#b6c6d8;font-weight:650}
+  #cities .src{margin-top:6px;color:#5f7288}
+  #cities .src a{color:var(--dim)}
+  /* A world swap rebuilds the distance table, which is not instant. Saying so
+     beats a picker that looks unresponsive for a third of a second. */
+  #swap{position:absolute;inset:var(--strip) 0 0 0;z-index:1200;display:flex;
+    align-items:center;justify-content:center;background:rgba(7,10,15,.72);
+    color:var(--dim);font-size:13px;backdrop-filter:blur(2px)}
+  #swap.hidden{display:none}
   /* Shown only when #nav is too wide to fit, so there is always a way through
      to the explainer. */
   #docs{display:none;flex:none;margin-left:10px;padding:7px 12px;border:1px solid var(--line);
@@ -138,7 +169,11 @@
   #railL,#railR{position:absolute;top:calc(var(--strip) + 14px);bottom:14px;z-index:700;
     display:flex;flex-direction:column;gap:12px;pointer-events:none}
   #railL{left:14px;align-items:flex-start;width:min(288px,calc(50vw - 21px))}
-  #railR{right:14px;align-items:flex-end;width:min(360px,calc(50vw - 21px))}
+  /* The right rail starts below the zoom control rather than beside it: the
+     panels are wide enough to reach the corner, so sharing the row would put
+     the buttons on top of them. */
+  #railR{right:14px;align-items:flex-end;width:min(360px,calc(50vw - 21px));
+    top:calc(var(--strip) + 14px + var(--zoomh) + 12px)}
   /* The rails themselves must not swallow map drags -- only their panels. */
   #railL > *,#railR > *{pointer-events:auto;max-width:100%}
   #hud{width:288px;padding:15px 17px;flex:0 1 auto;min-height:0;overflow:auto}
@@ -200,16 +235,13 @@
   .maplabel.rej b{color:#ff9d96;font-weight:600}
   .zoomhint{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);z-index:700;
     padding:6px 12px;font-size:11px;color:var(--dim)}
-  /* Leaflet's zoom control defaults to bottom-left and draws above the panels
-     (its stacking context sits higher). Lifting it vertically was not enough:
-     the left column is occupied top-to-bottom by #hud and #log in city mode,
-     so it still landed on the stats. Bottom-centre is the one strip of map no
-     panel claims in either mode -- clear of the rails either side, and above
-     the story control bar. */
-  .leaflet-bottom.leaflet-left{left:50%;transform:translateX(-50%);bottom:86px}
-  /* Below this the rails meet in the middle and there is no free strip left;
-     wheel and pinch zoom still work. */
-  @media (max-width:820px){ .leaflet-bottom.leaflet-left{display:none} }
+  /* Zoom sits in the top-right corner, flush with the right rail and with the
+     rail's own margin instead of Leaflet's 10px one. Leaflet's corners are
+     measured from #map, which already starts below the strip, so no --strip
+     here. The rail below starts one control-height lower (see --zoomh) so the
+     buttons never land on a panel. */
+  .leaflet-top.leaflet-right{top:14px;right:14px}
+  .leaflet-top.leaflet-right .leaflet-control{margin:0}
   #boot{position:absolute;inset:var(--strip) 0 0 0;z-index:900;display:flex;
     align-items:center;justify-content:center;background:#070a0f;color:var(--dim);
     transition:opacity .4s}
@@ -229,12 +261,14 @@
   <div class="modes">
     <button id="mStory" class="on"><span class="lg">Watch one case</span><span class="sm">Story</span></button>
     <button id="mCity"><span class="lg">Full city view</span><span class="sm">City</span></button>
+    <button id="mReal"><span class="lg">Real city</span><span class="sm">Real</span></button>
   </div>
   <a id="docs" href="explain.html">how it works</a>
 </div>
 
 <div id="map"></div>
 <div id="boot">starting the dispatch engine…</div>
+<div id="swap" class="hidden">loading…</div>
 
 <!-- ============ STORY MODE ============ -->
 <div id="story" class="panel">
@@ -263,6 +297,28 @@
      #why in the same bottom-right corner -- they overlapped whenever the
      window was short. Stacked in a column they push each other instead. -->
 <div id="railL">
+
+<!-- ============ REAL CITY MODE ============ -->
+<!-- The roster is real and the streets are not, and a viewer who assumes the
+     map is Mumbai will read every route on it as a claim about Mumbai. The
+     provenance line is part of the feature, not decoration around it. -->
+<div id="cities" class="panel hidden">
+  <div class="chead">
+    <h2 style="margin:0">real hospital rosters</h2>
+    <span id="cityStat" class="cstat">—</span>
+  </div>
+  <div id="cityChips" class="chips"></div>
+  <div class="prov">
+    <b>Real:</b> hospital names, wards, ownership, bed counts, accreditation and
+    the departments each one publishes.<br>
+    <b>Simulated:</b> the street layout, where each hospital sits on it,
+    ambulances, doctors and their shifts, medicine and queues — this dataset
+    carries no coordinates, so the map is a generated grid, not
+    <span id="cityNamed">the city</span>.
+    <div class="src">Hospital data: <a href="https://wibest.in/data/" target="_blank"
+      rel="noopener">WIB Open Data</a>, CC-BY 4.0 · <span id="cityVer">—</span></div>
+  </div>
+</div>
 
 <div id="hud" class="panel hidden">
   <div class="clock">simulated time <b id="clock">10:00</b></div>
@@ -353,17 +409,32 @@ const HN_A = ['Riverside','St. Mary','City General','Greenfield','Hillcrest','La
   'Northgate','Southbank','Oakwood','Pinecrest','Westfield','Eastbrook','Sunrise',
   'Cedar Park','Fairview','Highland','Brookside','Meadowvale','Stonebridge','Kingsway'];
 const HN_B = ['Hospital','Medical Centre','Regional Hospital'];
-const hospName = (id) => `${HN_A[id % HN_A.length]} ${HN_B[Math.floor(id / HN_A.length) % HN_B.length]}`;
+/* On a real roster the engine sends the actual name and there is nothing to
+   invent; the generated one is the fallback for the synthetic district. */
+const hospName = (id) => hospInfo.get(id)?.name
+  || `${HN_A[id % HN_A.length]} ${HN_B[Math.floor(id / HN_A.length) % HN_B.length]}`;
 const URG = ['LOW','MEDIUM','HIGH','CRITICAL'];
 const mins = (ms) => (ms / 60000) < 1 ? '<1 min' : Math.round(ms / 60000) + ' min';
 const minsX = (ms) => (ms / 60000).toFixed(1) + ' min';
+
+/* Which roster the engine currently holds. Independent of the view mode: you
+   can watch a single Mumbai case in story mode or run the whole Mumbai roster
+   under load, and switching between those two views does not reload anything. */
+let WORLD = { city: -1, name: 'synthetic district' };
+let CITIES = [], DATA_VER = '', showAllCities = false;
+const CAP_NAME = ['trauma','cardiac','neuro','burns','obstetric','paediatric',
+                  'toxicology','intensive care'];
+const OWNER = ['private','government','trust'];
 
 let BOUNDS_RAW = null;
 function district(x, y) {
   if (!BOUNDS_RAW) return 'the district';
   const cx = Math.min(4, Math.floor((x - BOUNDS_RAW.minx) / ((BOUNDS_RAW.maxx - BOUNDS_RAW.minx) / 5)));
   const cy = Math.min(3, Math.floor((y - BOUNDS_RAW.miny) / ((BOUNDS_RAW.maxy - BOUNDS_RAW.miny) / 4)));
-  return 'District ' + (cy * 5 + cx + 1);
+  const n = cy * 5 + cx + 1;
+  /* Never "Andheri" or "Bandra": the grid is generated and the dataset has no
+     coordinates, so a real place name here would be a claim we cannot make. */
+  return WORLD.city >= 0 ? `zone ${n} of the ${WORLD.name} roster` : 'District ' + n;
 }
 function polyKm(pts) {           /* pts are engine metres */
   let m = 0;
@@ -383,7 +454,7 @@ const P = (c) => [c[1] / S, c[0] / S];
 const map = L.map('map', { crs: L.CRS.Simple, minZoom: -7, maxZoom: 12,
   zoomControl: false, attributionControl: false, preferCanvas: true, zoomSnap: .5,
   wheelPxPerZoomLevel: 90 });
-L.control.zoom({ position: 'bottomleft' }).addTo(map);
+L.control.zoom({ position: 'topright' }).addTo(map);
 
 const roadCanvas = L.canvas({ padding: .4 });
 const unitCanvas = L.canvas({ padding: .4 });
@@ -429,10 +500,20 @@ setTimeout(() => {
 }, 15000);
 
 function onInit(m) {
+  /* A world swap re-sends init. Everything keyed by a hospital or ambulance id
+     belongs to the world that is going away, so it all goes with it -- a route
+     left on the map would be drawn to a hospital that no longer exists. */
+  routeLayer.clearLayers(); unitLayer.clearLayers(); storyLayer.clearLayers();
+  missions.clear(); clearTimers(); storyBusy = false; storyQueue = [];
   staticLayer.clearLayers(); hospMark.clear(); fleetDots.clear(); hospInfo.clear();
   BOUNDS_RAW = m.bounds;
   bounds = [P([m.bounds.minx, m.bounds.miny]), P([m.bounds.maxx, m.bounds.maxy])];
   map.fitBounds(bounds, { padding: [30, 30] });
+
+  if (m.cities) { CITIES = m.cities; DATA_VER = m.dataVersion || ''; }
+  if (m.world) WORLD = m.world;
+  renderCities();
+  setWorldLabel();
 
   for (const h of m.hospitals) {
     const size = 13 + Math.round(Math.sqrt(h.beds_total));
@@ -440,15 +521,96 @@ function onInit(m) {
       icon: L.divIcon({ className: '', iconSize: [size, size], iconAnchor: [size/2, size/2],
         html: `<div class="hosp" style="width:${size}px;height:${size}px;font-size:${size*.62}px">+</div>` })
     }).addTo(staticLayer);
-    mk.bindTooltip(`${hospName(h.id)} — ${h.beds_free}/${h.beds_total} beds`, { direction: 'top' });
     hospMark.set(h.id, mk);
-    hospInfo.set(h.id, { x: h.x, y: h.y, total: h.beds_total });
+    hospInfo.set(h.id, { x: h.x, y: h.y, total: h.beds_total, name: h.name,
+      area: h.area, spec: h.spec, inferred: h.inferred || 0, nabh: h.nabh,
+      type: h.type, reported: h.beds_reported, rating: h.rating });
+    mk.bindTooltip(hospTip(h.id, h.beds_free), { direction: 'top' });
   }
   for (const a of m.fleet) {
     fleetDots.set(a.id, L.circleMarker(P([a.x, a.y]), { renderer: unitCanvas, radius: 3.2,
       color: '#0b1119', weight: 1, fillColor: '#8fa3ba', fillOpacity: 1 }).addTo(staticLayer));
   }
-  logLine(`network online — ${m.hospitals.length} hospitals, ${m.fleet.length} ambulances`, 'ok');
+  logLine(`${WORLD.name} online — ${m.hospitals.length} hospitals, ${m.fleet.length} ambulances`, 'ok');
+
+  if (m.switched) {
+    $('swap').classList.add('hidden');
+    if (mode === 'story') { setPlaying(true); nextCase(); }
+  }
+}
+
+/* The tooltip is where the dataset gets to speak for itself: real ward, real
+   ownership, real accreditation, and the real headline bed count next to the
+   emergency pool the dispatcher is actually bidding for. */
+function hospTip(id, free) {
+  const h = hospInfo.get(id) || {};
+  const beds = `${free}/${h.total} emergency beds`;
+  if (!h.name) return `${hospName(id)} — ${beds}`;
+  const depts = CAP_NAME.filter((_, i) => (h.spec >> i) & 1);
+  const inferred = CAP_NAME.filter((_, i) => (h.inferred >> i) & 1);
+  return `<b>${h.name}</b><br><span style="color:#8296ad">${h.area} · `
+    + `${OWNER[h.type] || 'private'}${h.nabh ? ' · NABH' : ''} · `
+    + `${h.reported} beds reported</span><br>${beds}`
+    + (depts.length ? `<br><span style="color:#8296ad">${depts.join(', ')}</span>` : '')
+    + (inferred.length ? `<br><span style="color:#d29922">${inferred.join(', ')}: `
+        + `inferred, not in the dataset</span>` : '');
+}
+
+/* ---------- real city picker ---------- */
+const FEATURED = 8;               /* the metros the generator puts first */
+function renderCities() {
+  const box = $('cityChips');
+  if (!box || !CITIES.length) return;
+  const shown = showAllCities ? CITIES : CITIES.slice(0, FEATURED);
+  box.innerHTML = '';
+  for (const c of shown) {
+    const b = document.createElement('button');
+    b.textContent = c.name;
+    b.title = `${c.hospitals} hospitals · ${c.beds_reported.toLocaleString()} reported beds`
+            + ` · ${c.nabh} NABH-accredited`;
+    b.className = c.i === WORLD.city ? 'on' : '';
+    b.onclick = () => loadWorld(c.i);
+    box.appendChild(b);
+  }
+  if (!showAllCities && CITIES.length > FEATURED) {
+    const b = document.createElement('button');
+    b.className = 'more';
+    b.textContent = `+${CITIES.length - FEATURED} more`;
+    b.onclick = () => { showAllCities = true; renderCities(); };
+    box.appendChild(b);
+  }
+  const d = document.createElement('button');
+  d.textContent = 'synthetic district';
+  d.className = WORLD.city < 0 ? 'on' : '';
+  d.onclick = () => loadWorld(-1);
+  box.appendChild(d);
+
+  const c = CITIES.find((x) => x.i === WORLD.city);
+  $('cityStat').textContent = c
+    ? `${c.hospitals} hospitals · ${c.nabh} NABH`
+    : `${CITIES.length} cities available`;
+  $('cityNamed').textContent = c ? c.name : 'a real city';
+  $('cityVer').textContent = DATA_VER ? `dataset ${DATA_VER}` : '';
+}
+
+function loadWorld(idx) {
+  if (idx === WORLD.city) return;
+  $('swap').textContent = idx < 0
+    ? 'loading the synthetic district…'
+    : `loading ${(CITIES.find((c) => c.i === idx) || {}).name || 'city'} — `
+      + 'rebuilding the hospital distance table…';
+  $('swap').classList.remove('hidden');
+  send({ type: 'world', value: idx });
+  /* The bridge answers with a fresh init. If it never does, stop covering the
+     map -- a stuck overlay reads as a dead page. */
+  setTimeout(() => $('swap').classList.add('hidden'), 12000);
+}
+
+function setWorldLabel() {
+  const el = document.querySelector('#brand small');
+  if (el) el.textContent = WORLD.city >= 0
+    ? `${WORLD.name} · real hospital roster`
+    : 'rural emergency dispatch';
 }
 
 function onRoads(m) {
@@ -473,7 +635,7 @@ function applyZoom() {
   if (show && !map.hasLayer(l)) l.addTo(map);
   if (!show && map.hasLayer(l)) map.removeLayer(l);
   const zh = $('zoomhint');
-  zh.classList.toggle('hidden', show || mode !== 'city');
+  zh.classList.toggle('hidden', show || mode === 'story');
 }
 map.on('zoomend', applyZoom);
 
@@ -596,7 +758,7 @@ function updateHosp(id, free) {
   const el = mk.getElement()?.querySelector('.hosp'); if (!el) return;
   el.classList.toggle('low', free > 0 && free / info.total < .35);
   el.classList.toggle('full', free <= 0);
-  mk.setTooltipContent(`${hospName(id)} — ${free}/${info.total} beds`);
+  mk.setTooltipContent(hospTip(id, free));
 }
 function onRelease(m) {
   const s = missions.get(m.id);
@@ -802,6 +964,13 @@ function meter(id, frac, warnBelow) {
 }
 function onTelemetry(m) {
   const e = m.engine || {};
+  /* Another browser can switch the world out from under this one. The init
+     broadcast normally carries that, and this is the backstop for a client
+     that connected while the swap was in flight. */
+  if (e.city !== undefined && e.city !== WORLD.city) {
+    WORLD = { city: e.city, name: e.world || WORLD.name };
+    renderCities(); setWorldLabel();
+  }
   $('p50').textContent = m.p50 ? m.p50.toFixed(0) + 'µs' : '—';
   $('p99').textContent = m.p99 ? m.p99.toFixed(0) + 'µs' : '—';
   $('considered').textContent = lastConsidered || '—';
@@ -836,17 +1005,27 @@ function logLine(html, level) {
 
 /* ============================ modes ============================ */
 const STORY_EL = ['story','storyctl'];
-/* The legend stays up in both modes -- it explains the map itself, and the
+/* The legend stays up in every mode -- it explains the map itself, and the
    map is on screen either way. It is collapsed to a chip until hovered. */
 const CITY_EL  = ['hud','ctl','why','log'];
+/* Three views over two worlds. The view decides what is on screen; the world
+   decides whose hospitals are in the engine, and the two are deliberately
+   independent -- "real city" is where you choose a roster, but the roster you
+   chose stays loaded when you go back to watching one case at a time. */
 function setMode(next) {
   mode = next;
   $('mStory').classList.toggle('on', next === 'story');
   $('mCity').classList.toggle('on', next === 'city');
+  $('mReal').classList.toggle('on', next === 'real');
   STORY_EL.forEach((id) => $(id).classList.toggle('hidden', next !== 'story'));
-  CITY_EL.forEach((id) => $(id).classList.toggle('hidden', next !== 'city'));
+  CITY_EL.forEach((id) => $(id).classList.toggle('hidden', next === 'story'));
+  $('cities').classList.toggle('hidden', next !== 'real');
 
-  if (next === 'city') {
+  /* Entering the real-city view with nothing but the synthetic district
+     loaded would show a picker above a map of nowhere in particular. */
+  if (next === 'real' && WORLD.city < 0 && CITIES.length) loadWorld(CITIES[0].i);
+
+  if (next !== 'story') {
     clearTimers(); storyBusy = false; storyQueue = []; storyLayer.clearLayers();
     send({ type: 'rate', value: +$('rate').value });   /* keep slider and engine in step */
     send({ type: 'run', value: running });
@@ -867,6 +1046,7 @@ function setMode(next) {
 }
 $('mStory').onclick = () => setMode('story');
 $('mCity').onclick  = () => setMode('city');
+$('mReal').onclick  = () => setMode('real');
 
 $('sPlay').onclick = () => {
   setPlaying(!storyOn);

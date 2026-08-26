@@ -52,7 +52,14 @@ quick: bench
 serve: server
 	./server 9090
 
+# Refresh the compiled-in real-city hospital rosters from the published open
+# dataset. Deliberately NOT part of `all`: it reaches the network, and
+# src/city_data.h is committed precisely so that a build never has to.
+# Regenerate on purpose, then read the diff.
+city-data:
+	python3 scripts/gen_city_data.py --out src/city_data.h
+
 clean:
 	rm -f src/*.o src/*.d bench server tests
 
-.PHONY: all test test-protocol test-all run quick serve clean
+.PHONY: all test test-protocol test-all run quick serve city-data clean

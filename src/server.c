@@ -21,6 +21,8 @@
  *   NODE <index>                 resolve a village index to a node id
  *   HOSPITALS | FLEET | BOUNDS   static map data for the client
  *   ROADS <class> <from_node>    road geometry, paginated by node cursor
+ *   CITIES                       real-city roster available to load
+ *   CITY <index> | DISTRICT      swap the world for a real city, or back
  *   STATS | QUIT
  */
 #define _GNU_SOURCE
@@ -39,6 +41,7 @@
 #define N_AMB  200
 #define N_VILLAGE 5000
 #define DOCS_PER_HOSP 6
+#define WORLD_SEED 0xBEEF01ull
 #define PATH_CAP 16384
 #define LINE_CAP 512
 #define OUT_CAP  (1 << 20)
@@ -58,6 +61,32 @@ typedef struct { Search back, fwd, geo; uint32_t path[PATH_CAP]; char out[OUT_CA
 static uint32_t tok(char **p) {
     while (**p == ' ') (*p)++;
     return (uint32_t)strtoul(*p, p, 10);
+}
+
+/* Swap the loaded world: the synthetic rural district (city < 0) or a real
+ * city's hospital roster. The road network is untouched -- only the roster,
+ * fleet and distance table are rebuilt, which is what makes the switch a
+ * ~200 ms operation rather than a restart. The caller must hold the write
+ * lock; every reader indexes W.hosp and HT.d by the same hospital count, and
+ * that count changes here.
+ *
+ * Safe on first call: W and HT are static, so their pointers start NULL and
+ * the frees are no-ops. */
+static void load_world_locked(int32_t city) {
+    world_free(&W);
+    htable_free(&HT);
+    if (city < 0 || !world_build_city(&W, &G, (uint32_t)city, N_VILLAGE, WORLD_SEED))
+        world_build(&W, &G, N_HOSP, N_AMB, N_VILLAGE, DOCS_PER_HOSP, WORLD_SEED);
+    htable_init(&HT, G.n_nodes, W.n_hosp);
+    Search boot; search_init(&boot, G.n_nodes);
+    htable_build(&HT, &G, &W, &boot);
+    search_free(&boot);
+}
+
+/* "Mumbai" if a real roster is loaded, the synthetic district otherwise. */
+static const char *world_label(void) {
+    const CityInfo *ci = W.city >= 0 ? city_info((uint32_t)W.city) : NULL;
+    return ci ? ci->name : "synthetic district";
 }
 
 /* Append "[x,y],..." for a node list, optionally reversed. */
@@ -273,14 +302,75 @@ static int handle(Ctx *c, char *line) {
             n += snprintf(c->out + n, (size_t)(OUT_CAP - n),
                 "%s{\"id\":%u,\"node\":%u,\"x\":%.1f,\"y\":%.1f,\"spec\":%u,"
                 "\"on_duty\":%u,\"docs\":%u,\"beds_free\":%d,\"beds_total\":%d,"
-                "\"med\":%d,\"med_cap\":%d,\"queue\":%u,\"wait_ms\":%u}",
+                "\"med\":%d,\"med_cap\":%d,\"queue\":%u,\"wait_ms\":%u",
                 i ? "," : "", i, nd, G.x[nd], G.y[nd], W.hosp[i].spec_mask,
                 W.hosp[i].on_duty_mask, W.hosp[i].docs_on_duty,
                 W.hosp[i].beds_free, W.hosp[i].beds_total,
                 med, medcap, W.hosp[i].queue_len, hosp_wait_ms(&W.hosp[i]));
+            /* Real roster loaded: send what the dataset actually says, so the
+             * client never has to invent a name for a real hospital. The
+             * generator rejects anything outside printable ASCII and these
+             * strings hold no quotes or backslashes, so they need no escaping.
+             * `inferred` is the honesty flag -- departments the dataset did
+             * not list, which the UI has to mark as inferred. */
+            const CityHospital *ch = W.city >= 0
+                ? city_hospital((uint32_t)W.city, i) : NULL;
+            if (ch)
+                n += snprintf(c->out + n, (size_t)(OUT_CAP - n),
+                    ",\"name\":\"%s\",\"area\":\"%s\",\"beds_reported\":%u,"
+                    "\"inferred\":%u,\"type\":%u,\"nabh\":%u,\"rating\":%.1f",
+                    ch->name, ch->area, ch->beds, ch->inferred, ch->type,
+                    ch->nabh, ch->rating10 / 10.0);
+            n += snprintf(c->out + n, (size_t)(OUT_CAP - n), "}");
         }
         pthread_rwlock_unlock(&LOCK);
         return n + snprintf(c->out + n, (size_t)(OUT_CAP - n), "]}\n");
+    }
+    if (!strncmp(line, "CITIES", 6)) {
+        int n = snprintf(c->out, OUT_CAP,
+            "{\"ok\":true,\"active\":%d,\"version\":\"%s\",\"source\":\"%s\",\"cities\":[",
+            W.city, city_data_version(), city_data_source());
+        for (uint32_t i = 0; i < city_count(); i++) {
+            const CityInfo *ci = city_info(i);
+            uint32_t beds = 0, nabh = 0;
+            for (uint32_t k = 0; k < ci->count; k++) {
+                const CityHospital *ch = city_hospital(i, k);
+                beds += ch->beds; nabh += ch->nabh;
+            }
+            n += snprintf(c->out + n, (size_t)(OUT_CAP - n),
+                "%s{\"i\":%u,\"name\":\"%s\",\"slug\":\"%s\",\"hospitals\":%u,"
+                "\"beds_reported\":%u,\"nabh\":%u}",
+                i ? "," : "", i, ci->name, ci->slug, ci->count, beds, nabh);
+        }
+        return n + snprintf(c->out + n, (size_t)(OUT_CAP - n), "]}\n");
+    }
+    if (!strncmp(line, "CITY", 4) || !strncmp(line, "DISTRICT", 8)) {
+        /* DISTRICT and an out-of-range CITY both mean "the synthetic world". */
+        int32_t want = -1;
+        if (line[0] == 'C') {
+            uint32_t i = tok(&arg);
+            if (i >= city_count())
+                return snprintf(c->out, OUT_CAP,
+                    "{\"ok\":false,\"error\":\"no such city\",\"cities\":%u}\n",
+                    city_count());
+            want = (int32_t)i;
+        }
+        uint64_t t0 = now_ns();
+        pthread_rwlock_wrlock(&LOCK);
+        load_world_locked(want);
+        uint32_t nh = W.n_hosp, na = W.n_amb, nd = W.n_doc, beds = 0;
+        for (uint32_t i = 0; i < nh; i++) beds += (uint32_t)W.hosp[i].beds_total;
+        const char *label = world_label();
+        int32_t loaded = W.city;
+        pthread_rwlock_unlock(&LOCK);
+        /* The fleet is new, so every mission id the client still holds is
+         * stale. It has to drop them; saying so here is cheaper than making
+         * the client guess. */
+        return snprintf(c->out, OUT_CAP,
+            "{\"ok\":true,\"city\":%d,\"name\":\"%s\",\"hospitals\":%u,"
+            "\"ambulances\":%u,\"doctors\":%u,\"beds_total\":%u,"
+            "\"took_ms\":%.1f,\"missions_invalidated\":true}\n",
+            loaded, label, nh, na, nd, beds, (now_ns() - t0) / 1e6);
     }
     if (!strncmp(line, "FLEET", 5)) {
         pthread_rwlock_rdlock(&LOCK);
@@ -321,6 +411,8 @@ static int handle(Ctx *c, char *line) {
             }
         }
         uint32_t clock = W.clock_ms;
+        int32_t city = W.city;
+        const char *label = world_label();
         pthread_rwlock_unlock(&LOCK);
         pthread_mutex_lock(&STAT_LOCK);
         uint64_t n = N_SERVED, tot = NS_TOTAL;
@@ -329,9 +421,10 @@ static int handle(Ctx *c, char *line) {
             "{\"ok\":true,\"nodes\":%u,\"edges\":%u,\"ambulances\":%u,\"busy\":%u,"
             "\"hospitals\":%u,\"beds_free\":%u,\"beds_total\":%u,\"doctors_on_duty\":%u,"
             "\"med\":%lld,\"med_cap\":%lld,\"queue\":%u,\"clock_ms\":%u,"
+            "\"city\":%d,\"world\":\"%s\","
             "\"served\":%llu,\"mean_us\":%.1f}\n",
             G.n_nodes, G.n_edges, W.n_amb, busy, W.n_hosp, beds, beds_tot, docs,
-            (long long)med, (long long)medcap, qtotal, clock,
+            (long long)med, (long long)medcap, qtotal, clock, city, label,
             (unsigned long long)n, n ? tot / 1000.0 / n : 0.0);
     }
     return snprintf(c->out, OUT_CAP, "{\"ok\":false,\"error\":\"unknown command\"}\n");
@@ -386,14 +479,12 @@ int main(int argc, char **argv) {
 
     uint64_t t0 = now_ns();
     graph_build_grid(&G, GRID_W, GRID_H, 0xC0FFEEull);
-    world_build(&W, &G, N_HOSP, N_AMB, N_VILLAGE, DOCS_PER_HOSP, 0xBEEF01ull);
-    htable_init(&HT, G.n_nodes, W.n_hosp);
-    Search boot; search_init(&boot, G.n_nodes);
-    htable_build(&HT, &G, &W, &boot);
-    search_free(&boot);
+    load_world_locked(-1);          /* start on the synthetic rural district */
     fprintf(stderr, "engine ready in %.1f ms | %u nodes %u edges | %.2f MB resident\n",
             (now_ns() - t0) / 1e6, G.n_nodes, G.n_edges,
             (graph_bytes(&G) + htable_bytes(&HT) + world_bytes(&W)) / 1048576.0);
+    fprintf(stderr, "%u real city rosters available (%s, %s)\n",
+            city_count(), city_data_version(), city_data_source());
 
     int srv = socket(AF_INET, SOCK_STREAM, 0);
     int one = 1;

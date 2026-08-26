@@ -25,7 +25,8 @@
   <img alt="decision: 50.8 microseconds" src="https://img.shields.io/badge/decision-50.8_%C2%B5s-blue?style=flat-square"/>
   <img alt="19,671 dispatches per second per core" src="https://img.shields.io/badge/19,671-dispatches%2Fsec%2Fcore-orange?style=flat-square"/>
   <img alt="footprint under 20 MB" src="https://img.shields.io/badge/footprint-under_20_MB-purple?style=flat-square"/>
-  <img alt="105 tests passing" src="https://img.shields.io/badge/tests-105_passing-brightgreen?style=flat-square"/>
+  <img alt="130 tests passing" src="https://img.shields.io/badge/tests-130_passing-brightgreen?style=flat-square"/>
+  <img alt="34 real Indian city rosters" src="https://img.shields.io/badge/34_real-city_rosters-f0b429?style=flat-square"/>
 </p>
 
 <p align="center">
@@ -44,6 +45,7 @@
 - **Survives the bad day** — 4,000 simultaneous emergencies dispatched in **412 ms**; a road closes in **107 ns**.
 - **Written from scratch in C** — ~2,000 lines, nothing beyond libc and pthreads. An entire district fits in **under 20 MB**, which is the difference between a system that gets deployed to a rural district and one that never leaves the slide deck.
 - **A live simulation you can drive** — story mode narrates one case at a time in plain English; city view runs the whole district under load, with controls to close 2,000 roads or jump to the night shift. **Zero npm dependencies.**
+- **It runs on real hospitals too** — a third mode loads the **actual roster of 34 Indian cities, 461 real hospitals** with their published departments, ownership and bed counts, and swaps the whole world in ~300 ms. In Pune exactly one hospital of 24 runs a burns unit, so every burns call in the city is driven to the same place. The map underneath is still generated, and the UI says so.
 
 <p align="center">
   <img src="docs/screenshots/city-view.jpg" alt="HealthWay full city view — the live district map, telemetry meters, scrolling decision log and the 'why this hospital' panel" width="100%"/>
@@ -368,21 +370,128 @@ The single-client figure is bound by round trips, not by the engine — which is
 
 **No `npm install`. No build step for the web. No dependencies beyond libc, pthreads and a bare Node install.**
 
+You need exactly two things: a **C11 compiler with `make`**, and **Node.js 18+**. Nothing else — there is no package manager step anywhere in this project.
+
+<details open>
+<summary><b>🐧 Linux</b> — Debian / Ubuntu, Fedora, Arch</summary>
+
+<br>
+
+**1. Install the toolchain**
+
 ```bash
-make              # portable build — bench, server and tests
-make test         # 74 engine assertions, exits non-zero on failure, under a second
-make test-all     # the above plus 31 protocol assertions against the live daemon
-./bench --quick   # benchmark in ~40 s   (plain ./bench for the full sweep)
+# Debian / Ubuntu
+sudo apt update && sudo apt install -y build-essential nodejs git
+
+# Fedora / RHEL
+sudo dnf install -y gcc make nodejs git
+
+# Arch
+sudo pacman -S --needed base-devel nodejs git
 ```
 
-**Run the live simulation:**
+Check both are present:
 
 ```bash
-./server 9090     # the C engine daemon
-node web/bridge.js
+cc --version && make --version && node --version
+```
+
+**2. Get the code and build it**
+
+```bash
+git clone https://github.com/Junior-paradox/HealthWay.git
+cd HealthWay
+make                # builds bench, server and tests — a few seconds
+make test-all       # 74 engine assertions + 31 protocol assertions
+```
+
+**3. Run the live simulation** — two terminals, or one with `&`
+
+```bash
+./server 9090       # terminal 1: the C engine daemon
+node web/bridge.js  # terminal 2: the Node bridge + web server
 ```
 
 Then open **<http://127.0.0.1:8080>** 🗺️
+
+**Stopping it:** `Ctrl-C` in each terminal. If you backgrounded them, `pkill -f './server 9090'` and `pkill -f 'web/bridge.js'`.
+
+</details>
+
+<details>
+<summary><b>🪟 Windows</b> — via WSL2 (recommended)</summary>
+
+<br>
+
+The engine is written against POSIX sockets and pthreads (`sys/socket.h`, `netinet/in.h`, `pthread.h`), so it does **not** compile with plain MSVC or MinGW without a Winsock port. **WSL2 runs it natively and is the supported path** — the binary is a real Linux binary, at full speed, and the browser side works from Windows unchanged.
+
+**1. Install WSL2** — in PowerShell **as Administrator**:
+
+```powershell
+wsl --install -d Ubuntu
+```
+
+Reboot if prompted, then open **Ubuntu** from the Start menu and set your username and password.
+
+**2. Inside the Ubuntu shell, install the toolchain**
+
+```bash
+sudo apt update && sudo apt install -y build-essential nodejs git
+cc --version && make --version && node --version
+```
+
+> If Ubuntu's `nodejs` is older than 18, install a current one:
+> ```bash
+> curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt install -y nodejs
+> ```
+
+**3. Get the code and build it**
+
+Clone **inside the WSL filesystem** (`~/`), not under `/mnt/c/` — cross-filesystem builds are dramatically slower.
+
+```bash
+cd ~
+git clone https://github.com/Junior-paradox/HealthWay.git
+cd HealthWay
+make
+make test-all
+```
+
+**4. Run it** — two Ubuntu terminals:
+
+```bash
+./server 9090       # terminal 1: the C engine daemon
+node web/bridge.js  # terminal 2: the Node bridge + web server
+```
+
+**5. Open it in your Windows browser** — go to **<http://127.0.0.1:8080>** 🗺️
+
+WSL2 forwards `localhost` to Windows automatically, so no extra configuration is needed. If the page doesn't load, run `wsl hostname -I` in PowerShell and use that address instead.
+
+**Editing from Windows:** VS Code with the *WSL* extension opens the repo in place — run `code .` from the Ubuntu shell inside the project directory.
+
+</details>
+
+### 🎛️ Everything the Makefile does
+
+| Command | What it does |
+|---|---|
+| `make` | Portable build — `bench`, `server` and `tests` |
+| `make test` | 86 engine assertions, exits non-zero on failure, under a second |
+| `make test-protocol` | 44 protocol assertions against a live daemon on a scratch port |
+| `make test-all` | Both of the above |
+| `make serve` | Shorthand for `./server 9090` |
+| `make quick` | `./bench --quick` — benchmark in ~40 s |
+| `make run` | `./bench` — the full sweep |
+| `make city-data` | Regenerates `src/city_data.h` from the published hospital dataset — the only target that touches the network, and never run by `make` |
+| `make clean` | Removes objects and binaries |
+
+**Ports** are overridable without editing anything: the bridge reads `PORT` (web, default 8080) and `ENGINE_PORT` (engine, default 9090).
+
+```bash
+./server 7000
+PORT=3000 ENGINE_PORT=7000 node web/bridge.js
+```
 
 > 🛡️ The build is **portable by default**. `-march=native` is opt-in via `make NATIVE=1`, because a binary built with it targets the build machine's exact CPU and will `SIGILL` on an older one. Header dependencies are tracked (`-MMD -MP`), so editing a `.h` actually triggers a rebuild instead of silently leaving a stale object behind.
 
@@ -515,7 +624,7 @@ Every dispatch reply carries the decision **and its justification**:
 
 ## 🖥️ What You See
 
-One page, two modes, one socket — because two very different people look at this project.
+One page, three modes, one socket — because very different people look at this project.
 
 ### 📖 Story mode *(the default)*
 
@@ -562,6 +671,40 @@ The whole district under load: hundreds of emergencies flowing, ambulances movin
 
 Controls that break things on purpose: change the emergency rate, inject a surge, **close 2,000 roads**, restock medicine, and **jump between the day and night shift** so the staffing map visibly changes. These are not animations — the C engine is genuinely recomputing.
 
+### 🏙️ Real city
+
+The same engine, loaded with the **actual hospital roster of a real Indian city**. Pick Mumbai, Pune, Bangalore, Delhi, Chennai, Hyderabad, Kolkata or Ahmedabad — 34 cities in all, **461 real hospitals** — and the district is swapped out in about 300 ms: new roster, new fleet, new distance table, same code path.
+
+Now the decision log stops saying *"Oakwood Hospital"* and starts saying this:
+
+```
+🚨  Severe burns reported in zone 9 of the Pune roster
+❌  Not Inlaks and Budhrani Hospital  —  3.7 min away, no such department
+❌  Not Sancheti Hospital             — 10.9 min away, no such department
+❌  Not Deenanath Mangeshkar Hospital — 14.2 min away, no such department
+❌  Not Sanjeevan Hospital Pune       — 14.9 min away, no such department
+🏥  Taking them to Sassoon General Hospital — 1,300 beds, government, Near Pune Railway Station
+    all 24 hospitals checked · total time to treatment 33 min
+```
+
+Burns is the case worth watching. Across all 24 Pune hospitals **exactly one** runs a burns unit, so **every** burns call in the city is driven to the same place — mean time to treatment **33.3 min**, against **21.6 min** for chest pain, which nearly every hospital can take. That is not a tuned demo; it is what the roster says.
+
+Switch to the **night shift** and the destinations move. On a sample of 120 calls in Pune, **every poisoning case and every paediatric case** goes somewhere different at 03:00 than it did at 10:00 — *Inlaks and Budhrani Hospital → Sanjeevan Hospital Pune* — because the specialist who was on at ten has gone home.
+
+#### 🔬 What is real here, and what is not
+
+This matters more than the feature does, so it is written on the panel itself, not buried:
+
+| | |
+|---|---|
+| ✅ **Real** | Hospital names, wards, ownership (private / government / trust), reported bed counts, NABH accreditation, and the departments each hospital publishes — 461 hospitals across 34 cities |
+| 🟡 **Inferred** | 40 department designations, flagged in amber in the tooltip. Hospital websites list what they *market*, and burns and poisoning are not marketed — 29 of the 34 cities list no burns unit at all. Where a city listed none, the capability is handed to its largest public hospital, which is what a real state referral network leans on. The UI says so on every one |
+| ❌ **Simulated** | The street layout, **where each hospital sits on it**, the ambulances, the doctors and their shifts, the medicine, and the queues. **The dataset carries no coordinates** — so the map is a generated grid, not Mumbai |
+
+That last row is the honest limit of this mode. It is a **real roster on a synthetic map**, and the UI never names a real neighbourhood for an incident, only *"zone 9 of the Pune roster"*. Real coordinates and real streets would come from OpenStreetMap, and that is still the swap-in described under [Honest Limitations](#-honest-limitations).
+
+The roster is **compiled into the binary** (`src/city_data.h`, 34 KB), not fetched. A dispatch daemon that needs an internet round trip to learn which hospitals exist is exactly the thing this project argues against, and a rural district is where the connection is worst. `make city-data` regenerates it on purpose, and the diff is reviewable.
+
 ### 🗣️ Plain language everywhere
 
 A deliberate rule: **nothing on screen uses jargon without translating it.**
@@ -577,12 +720,12 @@ A deliberate rule: **nothing on screen uses jargon without translating it.**
 
 ## ✅ Why You Can Trust It
 
-**Two suites, 105 assertions**, both exiting non-zero on failure. Full test plan with per-case IDs and a requirement→test traceability matrix: **[docs/TESTING.md](docs/TESTING.md)**.
+**Two suites, 130 assertions**, both exiting non-zero on failure. Full test plan with per-case IDs and a requirement→test traceability matrix: **[docs/TESTING.md](docs/TESTING.md)**.
 
 ```
-make test          src/test.c                74 checks — the engine, in-process
-make test-protocol scripts/protocol_test.sh  31 checks — the daemon, over TCP
-make test-all      both                     105 checks, 0 failed, under 4 s
+make test          src/test.c                86 checks — the engine, in-process
+make test-protocol scripts/protocol_test.sh  44 checks — the daemon, over TCP
+make test-all      both                     130 checks, 0 failed, under 4 s
 ```
 
 <details>
@@ -615,25 +758,7 @@ Six single-line mutations have since been injected and each was caught by the ri
 
 > **A test suite you have never watched fail is not evidence of anything.**
 
-The tests also run **inside the Docker build**, so a failing test fails the deploy.
-
 </details>
-
----
-
-## ☁️ Deploying
-
-A C daemon plus a raw-socket Node bridge can't run on a static or serverless host. It needs **one container** — which Render, Google Cloud Run, Fly.io and Railway all accept as a plain Dockerfile.
-
-**Render free plan**, using the included `render.yaml`:
-
-1. Push this repo to GitHub
-2. Render dashboard → **New → Blueprint** → pick the repo
-3. It reads `render.yaml`, builds the Dockerfile, and hands you a URL
-
-The image is two stages: the first compiles with portable flags and **runs the test suite as a build step**; the second carries just the binary, `web/`, and Node. `docker-start.sh` starts the engine, polls until it accepts connections, then **supervises both processes** — so if the engine dies, the container exits and the platform restarts something genuinely broken, instead of serving HTML forever with every dispatch hanging.
-
-Resident footprint is **~18 MB** for the engine plus Node, so the smallest instance anywhere is enough.
 
 ---
 
@@ -643,7 +768,7 @@ Resident footprint is **~18 MB** for the engine plus Node, so the smallest insta
 
 | Limitation | Detail |
 |---|---|
-| 🎲 **Synthetic data** | A generated 250×200 grid with three realistic road classes (90/50/29 km/h), from a fixed seed — for reproducibility and scale-on-demand. Real data is a swap-in: OpenStreetMap via Overpass gives real roads and hospital locations, `data.gov.in` gives facility data. Both feed the same `graph_build`. **It's a data-loading job, not an algorithm change** — but it hasn't been done. |
+| 🎲 **Synthetic roads** | The road network is a generated 250×200 grid with three realistic road classes (90/50/29 km/h), from a fixed seed — for reproducibility and scale-on-demand. **Real hospital rosters are now loaded** (34 cities, 461 hospitals; see [Real city](#-real-city)) but the published dataset carries **no coordinates**, so those hospitals still sit on the generated grid. Real streets and real positions would come from OpenStreetMap via Overpass, feeding the same `graph_build`. **It's a data-loading job, not an algorithm change** — and it is the half that has not been done. |
 | 🚦 **Traffic is static** | The engine already stores a base drive time separately from the current one *precisely* so a traffic multiplier can be applied. The live feed isn't written. |
 | ⏱️ **672 ms table rebuild** | The honest price of the distance table, paid whenever the map changes. Fine for a district where roads close a handful of times a day. Wrong design if the map changes every second. |
 | 📦 **Table grows as junctions × hospitals** | 184 MB at 200,000 junctions. Beyond that you'd partition the district or rebuild incrementally. |
@@ -667,6 +792,7 @@ Nothing here was invented from nothing. The two loads carried by this engine are
 |---|---|
 | **E. W. Dijkstra**, *A Note on Two Problems in Connexion with Graphs*, **Numerische Mathematik 1** (1959), pp. 269–271 | The shortest-path method itself — the foundation of both the ambulance search and every backward search that builds the distance table |
 | **D. Papadias, J. Zhang, N. Mamoulis & Y. Tao**, *Query Processing in Spatial Network Databases*, **VLDB 2003**, pp. 802–813 | **INE (Incremental Network Expansion)** — searching for the nearest facilities *along the road network* instead of by straight-line distance, expanding from the query point and collecting candidates as the frontier reaches them. This is the shape of the hospital search |
+| **WIB Open Data** — *WIB India Hospitals Dataset 2026* (version 2026-05-06), [wibest.in/data](https://wibest.in/data/), **CC-BY 4.0** | The real-city rosters: 463 Indian hospitals with names, cities, addresses, ownership, reported bed counts, NABH accreditation and published specialties. Used under CC-BY 4.0 with attribution; 461 of them, across the 34 cities with a roster large enough to simulate, are compiled into `src/city_data.h`. The capability bits, the referral fallback and everything spatial are ours, and are marked as such in the UI |
 
 **What this project contributes on top:**
 
@@ -691,7 +817,5 @@ Watch the two nearest hospitals get rejected — one has no cardiology departmen
 *That single case contains the entire argument for why "send them to the nearest hospital" is the wrong answer.*
 
 <br>
-
-**Built in a 6-hour hackathon.** · Engine in C · Bridge in dependency-free Node · Map in plain HTML
 
 </div>
